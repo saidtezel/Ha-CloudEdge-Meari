@@ -79,6 +79,8 @@ class CloudEdgeMeariCoordinator(CoordinatorStateMixin):
 
     # Camera subentry this coordinator serves; entities save settings there.
     subentry_id: str | None = None
+    # PtzController for PTZ cameras, created by the integration setup.
+    ptz_controller: Any = None
 
     def __init__(
         self,

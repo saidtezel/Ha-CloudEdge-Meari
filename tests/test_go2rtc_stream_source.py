@@ -220,5 +220,26 @@ class MainsCameraStillTests(unittest.TestCase):
         self.assertEqual(coord._live_deadline, 0.0)
 
 
+class PtzCodeTests(unittest.TestCase):
+    """807/808 for "ptz" cameras, 841/842 for "ptz2" (and flag-less msc) ones."""
+
+    def sent_with(self, caps: dict) -> tuple[bool, bool]:
+        device = {"capability": {"caps": caps}, "msc": 1}
+        coord = COORDINATOR(Mock(), "user@example.invalid", "x", device)
+        coord._api = Mock()
+        coord.ptz_move("left")
+        coord.ptz_stop()
+        return (
+            coord._api.ptz_start.call_args.kwargs["use_ptz2"],
+            coord._api.ptz_stop.call_args.kwargs["use_ptz2"],
+        )
+
+    def test_capability_picks_the_codes(self):
+        self.assertEqual(self.sent_with({"ptz2": 1}), (True, True))
+        self.assertEqual(self.sent_with({"ptz": 1}), (False, False))
+        self.assertEqual(self.sent_with({"ptz": 1, "ptz2": 1}), (True, True))
+        self.assertEqual(self.sent_with({}), (True, True))
+
+
 if __name__ == "__main__":
     unittest.main()

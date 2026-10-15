@@ -295,15 +295,22 @@ class CoordinatorStateMixin:
             self._fire_update()
         return ok
 
+    @property
+    def _uses_ptz2(self) -> bool:
+        # IoT 841/842 for "ptz2" cameras, 807/808 for cameras advertising only
+        # "ptz"; anything else (e.g. only the msc flag) keeps 841/842.
+        caps = self._capabilities
+        return bool(capability_value(caps, "ptz2")) or not capability_value(caps, "ptz")
+
     def ptz_move(self, direction: str) -> bool:
         api = self._api
         if api is None or direction not in PTZ_DIRECTIONS:
             return False
-        return api.ptz_start(self._sn_num, direction)
+        return api.ptz_start(self._sn_num, direction, use_ptz2=self._uses_ptz2)
 
     def ptz_stop(self) -> bool:
         api = self._api
-        return bool(api and api.ptz_stop(self._sn_num))
+        return bool(api and api.ptz_stop(self._sn_num, use_ptz2=self._uses_ptz2))
 
     def wake_camera(self) -> None:
         self._wake_event.set()
