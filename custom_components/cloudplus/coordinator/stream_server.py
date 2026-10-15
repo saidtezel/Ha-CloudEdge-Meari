@@ -1,4 +1,10 @@
-"""Small TCP MPEG-TS stream server."""
+"""Small MPEG-TS stream server: raw TCP or HTTP on the same port.
+
+HA's go2rtc client cannot parse a connected ``tcp://`` producer (go2rtc
+reports it without a ``url``), which breaks every WebRTC offer on that
+go2rtc. An ``http://`` producer carries its url, so ``stream_source`` hands
+out ``http://``; raw TCP clients (older ``tcp://`` configs) still work.
+"""
 
 from __future__ import annotations
 
@@ -20,6 +26,40 @@ CLIENT_SEND_TIMEOUT_S = 10.0
 # such as Frigate, and lets anyone on the network pull the decrypted video.
 LOCAL_BIND_HOST = "127.0.0.1"
 ANY_BIND_HOST = "0.0.0.0"
+# A raw-TCP client sends nothing; an HTTP client sends its request at once.
+HTTP_REQUEST_WAIT_S = 0.5
+HTTP_HEADER_LIMIT = 8192
+HTTP_RESPONSE = (
+    b"HTTP/1.0 200 OK\r\n"
+    b"Content-Type: video/mp2t\r\n"
+    b"Cache-Control: no-cache\r\n"
+    b"Connection: close\r\n\r\n"
+)
+
+
+def answer_http_request(client: socket.socket) -> bool:
+    """Send an HTTP response header if the client opened with a request.
+
+    Returns False when the client asked for headers only (HEAD) and should
+    get no stream. Raw-TCP clients are left untouched.
+    """
+    client.settimeout(HTTP_REQUEST_WAIT_S)
+    try:
+        request = client.recv(HTTP_HEADER_LIMIT, socket.MSG_PEEK)
+    except socket.timeout:
+        return True
+    finally:
+        client.settimeout(CLIENT_SEND_TIMEOUT_S)
+    if not request.startswith((b"GET ", b"HEAD ")):
+        return True
+    received = b""
+    while b"\r\n\r\n" not in received and len(received) < HTTP_HEADER_LIMIT:
+        chunk = client.recv(HTTP_HEADER_LIMIT - len(received))
+        if not chunk:
+            break
+        received += chunk
+    client.sendall(HTTP_RESPONSE)
+    return not request.startswith(b"HEAD ")
 
 
 @dataclass
@@ -232,6 +272,8 @@ class StreamServer:
         event: threading.Event,
     ) -> None:
         try:
+            if not answer_http_request(client):
+                return
             while self._running:
                 event.wait(timeout=0.5)
                 event.clear()

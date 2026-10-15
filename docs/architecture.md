@@ -49,7 +49,7 @@ derived from the camera's IoT model:
 
 | File | Core | IoT-driven |
 |------|------|------------|
-| `camera.py` | Live + idle MPEG-TS stream (`tcp://`), served to the browser by HA's built-in go2rtc (WebRTC) or HLS. Enabled for battery and mains-powered cameras. | — |
+| `camera.py` | Live + idle MPEG-TS stream (`http://`), served to the browser by HA's built-in go2rtc (WebRTC) or HLS. Enabled for battery and mains-powered cameras. | — |
 | `binary_sensor.py` | Motion / Awake / Charging. | Crying (cry alerts, `cry_det`). |
 | `button.py` | Wake Camera. | — |
 | `sensor.py` | Battery + Charge Status. | Temperature, Humidity, WiFi Signal, Baby Status (863). |
@@ -100,7 +100,7 @@ setup, so they survive restarts.
 | `iot.py` | Capability parsing and feature checks, IoT value normalization/lookups. |
 | `mpegts.py` + `muxer.py` | ffmpeg-based MPEG-TS muxer (video copy, audio encode). |
 | `audio_encoder.py` | G.711 µ-law → AAC. |
-| `stream_server.py` + `stream_bootstrap.py` | TCP fan-out of MPEG-TS, PAT/PMT seed, idle-stream loop. Listens on loopback unless Stream Host Mode exposes it on the LAN. |
+| `stream_server.py` + `stream_bootstrap.py` | TCP fan-out of MPEG-TS, PAT/PMT seed, idle-stream loop. Listens on loopback unless Stream Host Mode exposes it on the LAN. Each client gets bare MPEG-TS (raw TCP) or, if it opens with a GET, an HTTP response first: HA's go2rtc client can't parse a connected `tcp://` producer, so `stream_source` is `http://`. |
 | `backoff.py` | `RetryBackoff`, the exponential delay shared by the session loop and the motion-event poller. |
 
 ## P2P streamer
