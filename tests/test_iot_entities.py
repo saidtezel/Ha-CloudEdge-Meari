@@ -13,6 +13,13 @@ from debug_tools.bootstrap import _bootstrap_integration_modules
 
 MODULES = _bootstrap_integration_modules()
 COORDINATOR = MODULES["coordinator"].CloudEdgeMeariCoordinator
+RUNTIME = importlib.import_module("custom_components.cloudplus.runtime")
+
+
+def account_hass(entry: Any, coord: Any) -> Any:
+    """hass stand-in holding one account with one camera subentry."""
+    runtime = RUNTIME.AccountRuntime({"camera-1": coord})
+    return SimpleNamespace(data={"cloudplus": {entry.entry_id: runtime}})
 
 
 def load_platforms() -> dict[str, ModuleType]:
@@ -91,7 +98,7 @@ class SensorTests(unittest.IsolatedAsyncioTestCase):
     async def sensors(self, caps: dict, values: dict) -> dict:
         coord = coordinator(caps, values)
         entry = SimpleNamespace(entry_id="test")
-        hass = SimpleNamespace(data={SENSOR.DOMAIN: {entry.entry_id: coord}})
+        hass = account_hass(entry, coord)
         add_entities = Mock()
         await SENSOR.async_setup_entry(hass, entry, add_entities)
         return {entity._spec.code: entity for entity in add_entities.call_args.args[0]}
@@ -186,7 +193,7 @@ class SelectTests(unittest.IsolatedAsyncioTestCase):
     async def test_setup_omits_inactive_night_vision_and_empty_alarm(self):
         coord = coordinator({"dnm": 5, "ver": 22, "afq": 0}, {113: 0, 209: 5, 178: 1})
         entry = SimpleNamespace(entry_id="test")
-        hass = SimpleNamespace(data={SELECT.DOMAIN: {entry.entry_id: coord}})
+        hass = account_hass(entry, coord)
         add_entities = Mock()
         await SELECT.async_setup_entry(hass, entry, add_entities)
         entities = [entity for entity in add_entities.call_args.args[0] if hasattr(entity, "_spec")]
@@ -241,7 +248,7 @@ class NumberTests(unittest.IsolatedAsyncioTestCase):
     async def test_pir_interval_still_requires_a_pir_sensor(self):
         coord = coordinator({"pir": 0, "tmpr": 1}, {242: 30000})
         entry = SimpleNamespace(entry_id="test")
-        hass = SimpleNamespace(data={NUMBER.DOMAIN: {entry.entry_id: coord}})
+        hass = account_hass(entry, coord)
         add_entities = Mock()
         await NUMBER.async_setup_entry(hass, entry, add_entities)
         self.assertEqual(add_entities.call_args.args[0], [])

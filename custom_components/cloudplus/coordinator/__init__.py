@@ -7,18 +7,24 @@ import logging
 import subprocess
 import threading
 import time
-from typing import Any, Callable, TYPE_CHECKING
+from collections.abc import Mapping
+from typing import Any, Callable
 
 from homeassistant.core import HomeAssistant
 
 from ..api import MeariApiClient
 from ..const import (
+    CONF_MOTION_TIMEOUT,
+    CONF_MOTION_WAKE,
+    CONF_STREAM_HOST_MODE,
     CONF_STREAM_QUALITY,
     DEFAULT_APP_PROFILE,
     DEFAULT_COUNTRY_CODE,
     DEFAULT_MOTION_TIMEOUT,
     DEFAULT_PHONE_CODE,
+    DEFAULT_STREAM_HOST_MODE,
     DOMAIN,
+    STREAM_HOST_MODES,
 )
 from ..p2p_streamer import (
     ADAPTIVE_STREAM_ID,
@@ -39,14 +45,12 @@ from ..p2p_streamer.codecs import (
     uses_arrival_timed_mux,
     uses_timestamp_timed_mux,
 )
+from .backoff import RetryBackoff
 from .iot import parse_capabilities
 from .motion import MotionEventListener
 from .muxer import FfmpegMuxer
 from .state import CoordinatorStateMixin
 from .stream_server import StreamServer
-
-if TYPE_CHECKING:
-    from homeassistant.config_entries import ConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -66,11 +70,15 @@ LIVE_ADAPTIVE_IPC_MUX_HOLD_S = 1.0
 LIVE_ADAPTIVE_IPC_MUX_QUIET_S = 1.2
 LIVE_P2P_VIDEO_GAP_S = 1.0
 SNAPSHOT_CARD_REFRESH_INTERVAL = 3.0
-SNAPSHOT_CARD_REQUEST_TTL = 30.0
+SESSION_RETRY_INITIAL_S = 2.0
+SESSION_RETRY_MAX_S = 300.0
 
 
 class CloudEdgeMeariCoordinator(CoordinatorStateMixin):
     """Small runtime coordinator used by debug.py and camera entity."""
+
+    # Camera subentry this coordinator serves; entities save settings there.
+    subentry_id: str | None = None
 
     def __init__(
         self,
@@ -86,10 +94,9 @@ class CloudEdgeMeariCoordinator(CoordinatorStateMixin):
         initial_grab_timeout: int = 45,
         snapshot_conversion_enabled: bool = True,
         snapshot_min_interval: float = 10.0,
-        entry: "ConfigEntry | None" = None,
+        settings: Mapping[str, Any] | None = None,
     ) -> None:
         self.hass = hass
-        self._entry = entry
         self._email = email
         self._password = password
         self._device = device
@@ -127,9 +134,15 @@ class CloudEdgeMeariCoordinator(CoordinatorStateMixin):
         self._motion_type = ""
         self._motion_detected = False
         self._last_motion_time = 0.0
-        self._motion_wake_enabled = True
-        self._motion_timeout = DEFAULT_MOTION_TIMEOUT
-        self._stream_host_mode = "ip"
+        options = settings or {}  # settings persisted by entities
+        self._motion_wake_enabled = bool(options.get(CONF_MOTION_WAKE, True))
+        self._motion_timeout = self.clamp_motion_timeout(
+            options.get(CONF_MOTION_TIMEOUT, DEFAULT_MOTION_TIMEOUT)
+        )
+        host_mode = options.get(CONF_STREAM_HOST_MODE)
+        self._stream_host_mode = (
+            host_mode if host_mode in STREAM_HOST_MODES else DEFAULT_STREAM_HOST_MODE
+        )
         self._initial_frame_grab = bool(initial_frame_grab)
         self._initial_grab_timeout = max(30.0, float(initial_grab_timeout))
 
@@ -140,6 +153,7 @@ class CloudEdgeMeariCoordinator(CoordinatorStateMixin):
         self._has_ptz = self.supports_iot("ptz")
 
         self._running = False
+        self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._stream_thread: threading.Thread | None = None
         self._idle_thread: threading.Thread | None = None
@@ -156,7 +170,10 @@ class CloudEdgeMeariCoordinator(CoordinatorStateMixin):
         self._idle_stream_reset = threading.Event()
         self._stream_restart = threading.Event()
 
-        self._stream_server = StreamServer(self._request_stream_bootstrap)
+        self._stream_server = StreamServer(
+            self._request_stream_bootstrap,
+            bind_host=self.stream_bind_host_for(self._stream_host_mode),
+        )
         self._muxer = FfmpegMuxer(self._stream_server.broadcast)
 
         self._video_codec = CodecName.HEVC
@@ -184,7 +201,7 @@ class CloudEdgeMeariCoordinator(CoordinatorStateMixin):
         self._stream_idr_seed_generation = 0
         self._startup_safe_min_seed_generation = 0
 
-        quality_setting = entry.options.get(CONF_STREAM_QUALITY) if entry else None
+        quality_setting = options.get(CONF_STREAM_QUALITY)
         self._vvp_quality: int | None = parse_quality_setting(device, quality_setting)
         self._codec_params = CodecParameterCache()
         self._stream_started_keyframe = False
@@ -196,6 +213,7 @@ class CloudEdgeMeariCoordinator(CoordinatorStateMixin):
         if self._running:
             return
         self._running = True
+        self._stop_event.clear()
         self._stream_server.start()
         self._start_idle_loop()
         self._available = True
@@ -218,6 +236,7 @@ class CloudEdgeMeariCoordinator(CoordinatorStateMixin):
             await asyncio.to_thread(func)
 
     def _stop_blocking(self) -> None:
+        self._stop_event.set()
         self._stop_motion_listener()
         self._idle_stop.set()
         self._stop_streamer(join_timeout=4)
@@ -234,7 +253,9 @@ class CloudEdgeMeariCoordinator(CoordinatorStateMixin):
         self._stream_server.stop()
 
     def _watch_loop(self) -> None:
+        backoff = RetryBackoff(SESSION_RETRY_INITIAL_S, SESSION_RETRY_MAX_S)
         while self._running:
+            started = time.monotonic()
             try:
                 api = MeariApiClient(
                     email=self._email,
@@ -266,7 +287,9 @@ class CloudEdgeMeariCoordinator(CoordinatorStateMixin):
             self._set_camera_awake(False)
             self._fire_update()
             if self._running:
-                time.sleep(2)
+                delay = backoff.next_delay(time.monotonic() - started)
+                _LOGGER.debug("Retrying cloud session for %s in %.0fs", self._sn_num, delay)
+                self._stop_event.wait(delay)
 
     def _session_loop(self) -> None:
         self._poll_status()
@@ -513,31 +536,6 @@ class CloudEdgeMeariCoordinator(CoordinatorStateMixin):
             return False
         streamer.request_keyframe()
         return True
-
-    def get_latest_image(self) -> bytes | None:
-        self._snapshot_requested_until = time.monotonic() + SNAPSHOT_CARD_REQUEST_TTL
-        return self._latest_image
-
-    def set_vvp_quality(self, quality: int | None) -> None:
-        if quality == self._vvp_quality:
-            return
-        self._vvp_quality = quality
-        self._codec_params.clear(self._video_codec)
-        self._stream_started_keyframe = False
-        self._reset_live_mux_timing()
-        self._stream_restart.set()
-        if self._is_snap:
-            self._idle_frame_ready.clear()
-            self._idle_frame_refresh.set()
-            self._idle_stream_reset.set()
-            with self._idle_frame_lock:
-                self._idle_video_frame = None
-                self._latest_video_kf = None
-            self._latest_image = None
-            self._latest_image_source = ""
-            self._latest_image_generation += 1
-            self._latest_image_updated_at = 0.0
-        self._fire_update()
 
     def _idle_loop(self) -> None:
         next_frame = time.monotonic()

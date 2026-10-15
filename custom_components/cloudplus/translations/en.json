@@ -11,33 +11,55 @@
           "phone_code": "Phone code (e.g. 33, 1)",
           "app_profile": "App used to register the account"
         }
-      },
-      "camera": {
-        "title": "Select Camera",
-        "description": "Choose which camera to add. Run the flow again to add more cameras.",
-        "data": {
-          "selected_camera": "Camera"
-        }
       }
     },
     "error": {
       "cannot_connect": "Failed to connect to CloudEdge API.",
       "invalid_auth": "Invalid email or password.",
-      "no_devices": "No supported cameras found on this account.",
       "unknown": "An unexpected error occurred."
     },
     "abort": {
-      "already_configured": "All cameras on this account are already configured."
+      "already_configured": "This account is already configured."
+    }
+  },
+  "config_subentries": {
+    "camera": {
+      "entry_type": "Camera",
+      "initiate_flow": {
+        "user": "Add camera"
+      },
+      "step": {
+        "user": {
+          "title": "Add camera",
+          "description": "Cameras on this account are added automatically. Use this to bring back a camera you deleted.",
+          "data": {
+            "sn_num": "Camera",
+            "video_password": "Video encryption password (E2EE, optional)"
+          }
+        },
+        "reconfigure": {
+          "title": "Camera settings",
+          "description": "Leave the password empty if the camera does not use end-to-end encrypted video.",
+          "data": {
+            "video_password": "Video encryption password (E2EE)"
+          }
+        }
+      },
+      "abort": {
+        "no_new_cameras": "Every camera on this account is already added.",
+        "cannot_connect": "Failed to connect to CloudEdge API.",
+        "invalid_auth": "The account credentials were rejected. Update them under Configure.",
+        "reconfigure_successful": "Camera settings saved."
+      }
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "Camera Settings",
-        "description": "Update camera-specific settings. Empty account password keeps the current value; empty E2EE password disables E2EE password use.",
+        "title": "Account settings",
+        "description": "Update the account credentials used by every camera. Leave the password empty to keep the current one.",
         "data": {
           "password": "Account password (leave empty to keep current)",
-          "video_password": "Video encryption password (E2EE)",
           "country_code": "Country code",
           "phone_code": "Phone country code",
           "app_profile": "App profile"
@@ -50,24 +72,40 @@
   },
   "entity": {
     "binary_sensor": {
-      "motion": { "name": "Motion" },
-      "awake": { "name": "Camera Awake" },
-      "charging": { "name": "Charging" }
+      "motion": {
+        "name": "Motion"
+      },
+      "awake": {
+        "name": "Camera Awake"
+      },
+      "charging": {
+        "name": "Charging"
+      }
     },
     "button": {
-      "wake": { "name": "Wake Camera" }
+      "wake": {
+        "name": "Wake Camera"
+      }
     },
     "camera": {
-      "camera": { "name": "Camera" }
+      "camera": {
+        "name": "Camera"
+      }
     },
     "number": {
-      "motion_timeout": { "name": "Motion Timeout" }
+      "motion_timeout": {
+        "name": "Motion Timeout"
+      }
     },
     "sensor": {
-      "battery": { "name": "Battery" }
+      "battery": {
+        "name": "Battery"
+      }
     },
     "switch": {
-      "motion_wake": { "name": "Wake on Motion" }
+      "motion_wake": {
+        "name": "Wake on Motion"
+      }
     }
   }
 }

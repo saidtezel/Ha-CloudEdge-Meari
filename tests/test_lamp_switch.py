@@ -24,6 +24,7 @@ def load_switch() -> ModuleType:
 
 
 SWITCH = load_switch()
+RUNTIME = importlib.import_module("custom_components.cloudplus.runtime")
 
 
 def coordinator(has_lamp: bool) -> Any:
@@ -40,6 +41,7 @@ def coordinator(has_lamp: bool) -> Any:
     coord._has_lamp = has_lamp
     coord._lamp_on = False
     coord._update_callbacks = []
+    coord.subentry_id = "camera-1"
     return coord
 
 
@@ -63,7 +65,8 @@ class LampSwitchSetupTests(unittest.IsolatedAsyncioTestCase):
 
     async def setup(self, coord: Any) -> tuple[Mock, Mock]:
         entry = SimpleNamespace(entry_id="test", async_on_unload=Mock())
-        hass = SimpleNamespace(data={SWITCH.DOMAIN: {entry.entry_id: coord}})
+        runtime = RUNTIME.AccountRuntime({coord.subentry_id: coord})
+        hass = SimpleNamespace(data={"cloudplus": {entry.entry_id: runtime}})
         add_entities = Mock()
         await SWITCH.async_setup_entry(hass, entry, add_entities)
         return entry, add_entities
@@ -86,6 +89,8 @@ class LampSwitchSetupTests(unittest.IsolatedAsyncioTestCase):
         fire_update(coord)
         switches = lamp_switches(add_entities)
         self.assertEqual(len(switches), 1)
+        # added under the camera's own subentry, so it lands on its device
+        self.assertEqual(add_entities.call_args.kwargs, {"config_subentry_id": "camera-1"})
         # the same unique ID as a setup-time switch, so it keeps its entity ID
         self.assertEqual(switches[0]._attr_unique_id, "synthetic-camera_lamp")
 

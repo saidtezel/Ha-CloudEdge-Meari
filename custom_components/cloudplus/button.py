@@ -7,10 +7,10 @@ import logging
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import DOMAIN
 from .coordinator import CloudEdgeMeariCoordinator
+from .runtime import add_camera_entities
 from .entity import CloudEdgeMeariEntity
 
 _LOGGER = logging.getLogger(__name__)
@@ -19,12 +19,18 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up CloudEdge / Meari buttons from a config entry."""
-    coord: CloudEdgeMeariCoordinator = hass.data[DOMAIN][entry.entry_id]
+    add_camera_entities(hass, entry, async_add_entities, _camera_entities)
+
+
+def _camera_entities(
+    coord: CloudEdgeMeariCoordinator, entry: ConfigEntry
+) -> list[ButtonEntity]:
     if coord.is_battery_camera:
-        async_add_entities([CloudEdgeMeariWakeButton(coord, entry)])
+        return [CloudEdgeMeariWakeButton(coord, entry)]
+    return []
 
 
 class CloudEdgeMeariWakeButton(CloudEdgeMeariEntity, ButtonEntity):

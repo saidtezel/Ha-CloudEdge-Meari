@@ -49,6 +49,16 @@ class CloudEdgeMeariEntity(Entity):
     def _handle_update(self) -> None:
         self.async_write_ha_state()
 
+    @callback
+    def _save_option(self, key: str, value: Any) -> None:
+        """Persist a runtime setting in the camera subentry so it survives restarts."""
+        subentry = self._entry.subentries.get(self._coordinator.subentry_id or "")
+        if subentry is None or subentry.data.get(key) == value:
+            return
+        self.hass.config_entries.async_update_subentry(
+            self._entry, subentry, data={**subentry.data, key: value}
+        )
+
     @property
     def available(self) -> bool:
         return self._coordinator.available

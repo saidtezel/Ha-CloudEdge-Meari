@@ -11,10 +11,10 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import DOMAIN
 from .coordinator import CloudEdgeMeariCoordinator
+from .runtime import add_camera_entities
 from .entity import CloudEdgeMeariEntity
 
 _LOGGER = logging.getLogger(__name__)
@@ -23,15 +23,20 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up CloudEdge / Meari binary sensors from a config entry."""
-    coord: CloudEdgeMeariCoordinator = hass.data[DOMAIN][entry.entry_id]
-    entities = [CloudEdgeMeariMotionSensor(coord, entry)]
+    add_camera_entities(hass, entry, async_add_entities, _camera_entities)
+
+
+def _camera_entities(
+    coord: CloudEdgeMeariCoordinator, entry: ConfigEntry
+) -> list[BinarySensorEntity]:
+    entities: list[BinarySensorEntity] = [CloudEdgeMeariMotionSensor(coord, entry)]
     if coord.is_battery_camera:
         entities.append(CloudEdgeMeariAwakeSensor(coord, entry))
         entities.append(CloudEdgeMeariChargingSensor(coord, entry))
-    async_add_entities(entities)
+    return entities
 
 
 class CloudEdgeMeariMotionSensor(CloudEdgeMeariEntity, BinarySensorEntity):

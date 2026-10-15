@@ -7,10 +7,15 @@ from dataclasses import dataclass
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import CONF_STREAM_QUALITY, DOMAIN
+from .const import (
+    CONF_STREAM_HOST_MODE,
+    CONF_STREAM_QUALITY,
+    DEFAULT_STREAM_HOST_MODE,
+)
 from .coordinator import CloudEdgeMeariCoordinator
+from .runtime import add_camera_entities
 from .entity import CloudEdgeMeariEntity, CloudEdgeMeariIotEntity
 from .meari_commands import (
     ALARM_FREQUENCY,
@@ -22,6 +27,7 @@ from .meari_commands import (
 )
 
 STREAM_HOST_OPTIONS: dict[str, str] = {
+    "local": "Local Only",
     "ip": "IP Address",
     "docker": "Docker Hostname",
 }
@@ -158,10 +164,15 @@ def _select_options(
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up CloudEdge / Meari select entities from a config entry."""
-    coord: CloudEdgeMeariCoordinator = hass.data[DOMAIN][entry.entry_id]
+    add_camera_entities(hass, entry, async_add_entities, _camera_entities)
+
+
+def _camera_entities(
+    coord: CloudEdgeMeariCoordinator, entry: ConfigEntry
+) -> list[SelectEntity]:
     entities: list[SelectEntity] = [CloudEdgeMeariStreamHostSelect(coord, entry)]
     if coord.quality_profiles:
         entities.append(CloudEdgeMeariStreamQualitySelect(coord, entry))
@@ -170,7 +181,7 @@ async def async_setup_entry(
             continue
         if options := _select_options(coord, spec):
             entities.append(CloudEdgeMeariIotSelect(coord, entry, spec, options))
-    async_add_entities(entities)
+    return entities
 
 
 class CloudEdgeMeariIotSelect(CloudEdgeMeariIotEntity, SelectEntity):
@@ -211,7 +222,7 @@ class CloudEdgeMeariIotSelect(CloudEdgeMeariIotEntity, SelectEntity):
 
 
 class CloudEdgeMeariStreamHostSelect(CloudEdgeMeariEntity, SelectEntity):
-    """Select entity to choose between IP address or Docker hostname for stream URL."""
+    """Select how the MPEG-TS stream is exposed: loopback only, LAN IP or Docker hostname."""
 
     _attr_name = "Stream Host Mode"
     _attr_icon = "mdi:ip-network"
@@ -226,13 +237,17 @@ class CloudEdgeMeariStreamHostSelect(CloudEdgeMeariEntity, SelectEntity):
     @property
     def current_option(self) -> str:
         mode = self._coordinator.stream_host_mode
-        return STREAM_HOST_OPTIONS.get(mode, STREAM_HOST_OPTIONS["ip"])
+        return STREAM_HOST_OPTIONS.get(mode, STREAM_HOST_OPTIONS[DEFAULT_STREAM_HOST_MODE])
 
     async def async_select_option(self, option: str) -> None:
         """Change stream host mode."""
         key = _OPTION_TO_KEY.get(option)
         if key:
-            self._coordinator.set_stream_host_mode(key)
+            # Rebinding the listener joins its accept thread; keep it off the loop.
+            await self.hass.async_add_executor_job(
+                self._coordinator.set_stream_host_mode, key
+            )
+            self._save_option(CONF_STREAM_HOST_MODE, key)
         self.async_write_ha_state()
 
 
@@ -280,7 +295,7 @@ class CloudEdgeMeariStreamQualitySelect(CloudEdgeMeariEntity, SelectEntity):
             return
         quality_id = self._label_to_id.get(option)
         self._coordinator.set_vvp_quality(quality_id)
-        options = dict(self._entry.options)
-        options[CONF_STREAM_QUALITY] = _AUTO_LABEL if quality_id is None else quality_id
-        self.hass.config_entries.async_update_entry(self._entry, options=options)
+        self._save_option(
+            CONF_STREAM_QUALITY, _AUTO_LABEL if quality_id is None else quality_id
+        )
         self.async_write_ha_state()

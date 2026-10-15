@@ -57,14 +57,16 @@ each app's own identity during login.
   day/night, recording, anti-flicker, ONVIF, HomeKit, …) appear as native
   HA entities and write back to the camera.
 - **PTZ** — `cloudplus.ptz` service for cameras that support it.
-- **Multi-camera & multi-account** — one config entry per account, one
-  device per camera, all created automatically after login.
+- **Multi-camera & multi-account** — one integration entry per account,
+  with each camera as a sub-entry (its own device), all created
+  automatically after login.
 
 ---
 
 ## Requirements
 
-- Home Assistant **2024.1+**
+- Home Assistant **2025.3+** (camera sub-entries; WebRTC live view needs
+  HA's built-in go2rtc, part of the default config)
 - A Meari-compatible app account with at least one camera already paired in
   the official app
 - `ffmpeg` (bundled in HAOS, HA Container, and HA Supervised)
@@ -106,7 +108,9 @@ each app's own identity during login.
    | Phone code    | International dial code (e.g. `33` for France). |
    | App profile   | Choose the matching profile from [Supported apps](#supported-apps). |
 
-4. All cameras on the account are discovered and added as individual devices.
+4. All cameras on the account are discovered and added automatically. The
+   integration page shows **one entry per account**, with each camera
+   listed under it as a sub-entry that has its own device.
 
 > 💡 **Use a secondary account.** The Meari MQTT broker only allows one live
 > session per account at a time. If Home Assistant logs in with the same
@@ -114,19 +118,37 @@ each app's own identity during login.
 > vice-versa). Create a second cloud account and share the camera(s) with it
 > (or add it to the "family / home") before adding it to HA.
 
-### Per-camera options
+### Managing cameras
 
-Open any camera device → **Configure**:
+On the integration page, each camera is a sub-entry under its account:
 
-| Option            | Description |
-|-------------------|-------------|
-| Video password    | If you enabled **E2EE / video encryption** in the app, enter that 6-digit code here so the stream can be decrypted. Leave empty otherwise. |
+- **Video password** — open the camera sub-entry's ⋮ menu → **Reconfigure**.
+  If you enabled **E2EE / video encryption** in the app, enter that 6-digit
+  code so the stream can be decrypted; leave it empty otherwise.
+- **Remove a camera** — ⋮ → **Delete** on its sub-entry. It stays removed
+  across restarts.
+- **Add a camera back** (or one HA hasn't picked up) — **Add camera** on the
+  account entry lists the account's cameras that aren't added yet.
+- **Pause a camera without deleting it** — disable its device. The
+  integration stops connecting to it until you enable the device again.
+
+New cameras paired to the account later are added automatically the next
+time the integration loads (e.g. after a restart).
 
 ### Per-account options
 
-Open the account device → **Configure** — update the password / country /
-phone code / app profile in place. Changes are propagated to every camera
-entry automatically.
+Open the account entry → **Configure** — update the password / country /
+phone code / app profile in place. Every camera on the account picks up
+the change.
+
+### Upgrading from 0.3.x
+
+Earlier versions created a separate integration entry for every camera next
+to the account entry. On first start after upgrading, each camera entry is
+folded into its account as a sub-entry: devices, entity IDs, history,
+areas, the video password and the stream settings all carry over, and the
+old camera entries disappear. A camera whose entry you had disabled comes
+back as a disabled device.
 
 ---
 
@@ -139,7 +161,7 @@ discovered from the camera's IoT model values.
 
 | Entity              | Platform        | Purpose |
 |---------------------|-----------------|---------|
-| Camera              | `camera`        | Live preview + `stream_source` for go2rtc / Frigate. |
+| Camera              | `camera`        | Live view (WebRTC via HA's built-in go2rtc, or HLS) + `stream_source` for Frigate. |
 | Motion              | `binary_sensor` | PIR / motion / AI alert (person, pet, package, etc.). |
 | Camera Awake        | `binary_sensor` | True while the camera is actively streaming. |
 | Charging            | `binary_sensor` | USB charging state (battery cameras). |
@@ -148,7 +170,7 @@ discovered from the camera's IoT model values.
 | Wake Camera         | `button`        | Manually wake the camera. |
 | Wake on Motion      | `switch`        | Toggle auto-wake when a motion event fires. |
 | Motion Timeout      | `number`        | How long the camera stays awake after motion (10–600 s). |
-| Stream Host Mode    | `select`        | `IP Address` (default) or `Docker Hostname` for the stream URL — see [Streaming notes](#streaming-notes). |
+| Stream Host Mode    | `select`        | `Local Only` (default), `IP Address` or `Docker Hostname` — who can connect to the stream, see [Streaming notes](#streaming-notes). |
 | Stream Quality      | `select`        | `AUTO`, `SD`, `HD`, `QHD`, … — advertised profiles, or the native HD/SD fallback for legacy cameras. |
 
 ### IoT entities (model-dependent)
@@ -222,19 +244,55 @@ rather than `snap`, even though their capability map advertises `bat`. The
 coordinator treats those battery-capable doorbell categories as battery
 cameras so they use the same wake/idle-stream lifecycle.
 
+### Live view in Home Assistant (built-in go2rtc / WebRTC)
+
+Home Assistant 2024.11+ ships go2rtc and uses it for low-latency WebRTC
+live view (it is part of `default_config`). The camera entity works with it
+out of the box — no add-on, YAML or extra integration needed: HA hands the
+camera's `tcp://` MPEG-TS source to its go2rtc, which serves the video
+as-is and transcodes the AAC audio to Opus for the browser.
+
+- **H.264** (typically `SD`) plays over WebRTC in every browser.
+- **HEVC / H.265** (typically `HD`, `QHD`, `AUTO`) only plays over WebRTC
+  where the browser supports H.265 WebRTC (recent Safari / Chrome on
+  supported hardware). Elsewhere HA's frontend falls back to HLS, which has
+  the same HEVC limits plus a few seconds of latency. Pick `SD` under
+  *Stream Quality* if you want WebRTC everywhere.
+- Battery cameras keep their usual behaviour: opening the live view shows
+  the idle still frame; press *Wake Camera* (or let motion wake it) to go
+  live. Still images on dashboards come from the cached snapshot and never
+  wake the camera.
+- Mains-powered cameras stream on demand while someone watches. To keep
+  the dashboard still current they also stream for ~30 s when a dashboard
+  asks for an image and the cached one is missing or older than 5 minutes.
+
 ### Stream Host Mode
 
-The `Stream Host Mode` select entity controls how the public URL of the
-MPEG-TS server is advertised:
+The `Stream Host Mode` select entity controls who can connect to the
+MPEG-TS server and how its URL is advertised:
 
-- `IP Address` — uses the HA host's LAN IP (e.g. `tcp://192.168.1.10:36059`).
-  Best for HAOS / HA Container with host networking, or anything that
-  reaches HA directly by IP.
-- `Docker Hostname` — uses the container's hostname instead. Pick this if
-  Frigate / go2rtc runs in the **same Docker network** as HA and resolves
-  containers by name.
+- `Local Only` (default) — listens on `127.0.0.1` only
+  (`tcp://127.0.0.1:36059`). HA's live view (built-in go2rtc / WebRTC and
+  HLS) works; nothing else on your network can open the stream. The stream
+  carries decrypted video and has no authentication, so keep this unless
+  another machine or container needs it.
+- `IP Address` — listens on all interfaces and advertises the HA host's LAN
+  IP (e.g. `tcp://192.168.1.10:36059`). Pick this for Frigate or a
+  standalone go2rtc on another host or container that reaches HA by IP.
+- `Docker Hostname` — listens on all interfaces and advertises the
+  container's hostname instead. Pick this if Frigate / go2rtc runs in the
+  **same Docker network** as HA and resolves containers by name.
 
-### Using the stream in Frigate / go2rtc
+If you pointed HA's own go2rtc at an external go2rtc server (`go2rtc: url:`
+in `configuration.yaml`) that does not share HA's network namespace, pick
+`IP Address` too. The choice is remembered across restarts, as are *Stream
+Quality*, *Wake on Motion* and *Motion Timeout*.
+
+### Using the stream in Frigate / a standalone go2rtc
+
+First set *Stream Host Mode* to `IP Address` or `Docker Hostname`: the
+default `Local Only` mode refuses connections from other hosts and
+containers.
 
 The MPEG-TS server is internal to Home Assistant — it isn't a hardcoded
 RTSP URL you can paste into Frigate's config. You need to read the actual
@@ -322,8 +380,9 @@ Common issues:
 - **Camera never wakes** — deep-dormancy wakes are retried automatically
   for up to ~45 s; if it consistently fails, your account may not own the
   wake right (re-share from the app).
-- **Frigate loses the source** — flip *Stream Host Mode* between `IP
-  Address` and `Docker Hostname` depending on your network topology.
+- **Frigate can't connect / loses the source** — *Stream Host Mode*
+  defaults to `Local Only`; set it to `IP Address` or `Docker Hostname`
+  depending on your network topology.
 
 ---
 

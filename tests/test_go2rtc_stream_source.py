@@ -1,0 +1,224 @@
+"""Offline regressions for the camera stream, its exposure and cloud retries.
+
+Setup, subentries and migration run against a real HA core in tests/ha.
+"""
+
+from __future__ import annotations
+
+import importlib
+import unittest
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import AsyncMock, Mock, patch
+
+from debug_tools.bootstrap import _bootstrap_integration_modules
+
+MODULES = _bootstrap_integration_modules()
+COORDINATOR = MODULES["coordinator"].CloudEdgeMeariCoordinator
+CAMERA = MODULES["camera"]
+CONST = MODULES["const"]
+BACKOFF = importlib.import_module("custom_components.cloudplus.coordinator.backoff")
+MOTION = importlib.import_module("custom_components.cloudplus.coordinator.motion")
+
+
+def make_camera(port: int = 40000, host: str = "192.0.2.10") -> Any:
+    """Camera entity bound to a stand-in coordinator, no HA runtime."""
+    coord = SimpleNamespace(
+        stream_port=port,
+        stream_host=host,
+        is_battery_camera=True,
+        device_uuid="synthetic-camera",
+        device_name="Synthetic camera",
+        device_model="",
+        register_update_callback=Mock(return_value=Mock()),
+    )
+    camera = CAMERA.CloudEdgeMeariCamera(coord, SimpleNamespace(options={}))
+    camera.async_write_ha_state = Mock()
+    camera.async_refresh_providers = AsyncMock()
+    camera.stream = None
+    tasks: list = []
+    camera.hass = SimpleNamespace(async_create_task=tasks.append)
+    return camera, coord, tasks
+
+
+class CameraStreamSourceTests(unittest.IsolatedAsyncioTestCase):
+    """The camera must re-offer itself to go2rtc whenever its URL changes."""
+
+    async def test_stream_source_is_tcp_mpegts(self):
+        camera, _coord, _tasks = make_camera()
+        self.assertEqual(await camera.stream_source(), "tcp://192.0.2.10:40000")
+
+    async def test_no_port_means_no_source(self):
+        camera, _coord, _tasks = make_camera(port=0)
+        self.assertIsNone(await camera.stream_source())
+
+    async def test_unchanged_source_does_not_refresh(self):
+        camera, _coord, tasks = make_camera()
+        await camera.async_added_to_hass()
+        camera._handle_update()
+        self.assertEqual(tasks, [])
+        camera.async_write_ha_state.assert_called_once()
+
+    async def test_changed_source_refreshes_provider_and_hls(self):
+        camera, coord, tasks = make_camera(port=0)
+        await camera.async_added_to_hass()
+        camera.stream = Mock()
+        coord.stream_port = 40001
+        coord.stream_host = "cloudplus-ha"
+        camera._handle_update()
+        self.assertEqual(len(tasks), 1)
+        await tasks[0]
+        camera.stream.update_source.assert_called_once_with("tcp://cloudplus-ha:40001")
+        camera.async_refresh_providers.assert_awaited_once()
+        camera._handle_update()
+        self.assertEqual(len(tasks), 1)
+
+    async def test_stopping_coordinator_does_not_refresh(self):
+        camera, coord, tasks = make_camera()
+        await camera.async_added_to_hass()
+        coord.stream_port = 0
+        camera._handle_update()
+        self.assertEqual(tasks, [])
+
+
+class PersistedSettingsTests(unittest.TestCase):
+    """Runtime settings come back from the camera entry's options."""
+
+    def build(self, options: dict) -> Any:
+        return COORDINATOR(Mock(), "user@example.invalid", "x", {}, settings=options)
+
+    def test_defaults(self):
+        coord = self.build({})
+        self.assertEqual(coord.stream_host_mode, "local")
+        self.assertTrue(coord.motion_wake_enabled)
+        self.assertEqual(coord.motion_timeout, CONST.DEFAULT_MOTION_TIMEOUT)
+
+    def test_restored(self):
+        coord = self.build({
+            CONST.CONF_STREAM_HOST_MODE: "docker",
+            CONST.CONF_MOTION_WAKE: False,
+            CONST.CONF_MOTION_TIMEOUT: 300,
+        })
+        self.assertEqual(coord.stream_host_mode, "docker")
+        self.assertFalse(coord.motion_wake_enabled)
+        self.assertEqual(coord.motion_timeout, 300)
+
+    def test_invalid_values_fall_back(self):
+        coord = self.build({
+            CONST.CONF_STREAM_HOST_MODE: "bogus",
+            CONST.CONF_MOTION_TIMEOUT: 99999,
+        })
+        self.assertEqual(coord.stream_host_mode, "local")
+        self.assertEqual(coord.motion_timeout, CONST.MOTION_TIMEOUT_MAX)
+        self.assertEqual(self.build({CONST.CONF_MOTION_TIMEOUT: "bad"}).motion_timeout,
+                         CONST.DEFAULT_MOTION_TIMEOUT)
+
+
+class LocalOnlyStreamTests(unittest.TestCase):
+    """The stream listens on loopback unless a LAN mode is chosen."""
+
+    def build(self, options: dict) -> Any:
+        return COORDINATOR(Mock(), "user@example.invalid", "x", {}, settings=options)
+
+    def bound_host(self, coord: Any) -> str:
+        return coord._stream_server._sock.getsockname()[0]
+
+    def test_default_is_loopback(self):
+        coord = self.build({})
+        coord._stream_server.start()
+        try:
+            self.assertEqual(self.bound_host(coord), "127.0.0.1")
+            self.assertEqual(coord.stream_host, "127.0.0.1")
+        finally:
+            coord._stream_server.stop()
+
+    def test_lan_mode_rebinds_and_back(self):
+        coord = self.build({})
+        coord._stream_server.start()
+        try:
+            coord.set_stream_host_mode("ip")
+            self.assertEqual(self.bound_host(coord), "0.0.0.0")
+            self.assertNotEqual(coord.stream_host, "")
+            coord.set_stream_host_mode("local")
+            self.assertEqual(self.bound_host(coord), "127.0.0.1")
+            self.assertGreater(coord._stream_server.port, 0)
+        finally:
+            coord._stream_server.stop()
+
+    def test_saved_lan_mode_binds_all_interfaces(self):
+        coord = self.build({CONST.CONF_STREAM_HOST_MODE: "docker"})
+        coord._stream_server.start()
+        try:
+            self.assertEqual(self.bound_host(coord), "0.0.0.0")
+        finally:
+            coord._stream_server.stop()
+
+
+class RetryBackoffTests(unittest.TestCase):
+    """Cloud retries slow down instead of hammering the login endpoint."""
+
+    def test_doubles_to_cap_and_resets_after_healthy_run(self):
+        backoff = BACKOFF.RetryBackoff(2, 300)
+        self.assertEqual([backoff.next_delay() for _ in range(10)],
+                         [2, 4, 8, 16, 32, 64, 128, 256, 300, 300])
+        self.assertEqual(backoff.next_delay(ran_for_s=3600), 2)
+
+    def test_watch_loop_backs_off_on_rejected_login(self):
+        coord = COORDINATOR(Mock(), "user@example.invalid", "x", {})
+        coord._running = True
+        delays: list[float] = []
+
+        def wait(delay: float) -> bool:
+            delays.append(delay)
+            if len(delays) == 6:
+                coord._running = False
+            return False
+
+        coord._stop_event = SimpleNamespace(wait=wait)
+        client = Mock()
+        client.return_value.login.side_effect = PermissionError("Login failed: 1003")
+        with patch.object(MODULES["coordinator"], "MeariApiClient", client), \
+                self.assertLogs(MODULES["coordinator"].__name__, "WARNING"):
+            coord._watch_loop()
+        self.assertEqual(delays, [2, 4, 8, 16, 32, 64])
+
+    def test_motion_poll_backs_off_when_polls_keep_failing(self):
+        listener = MOTION.MotionEventListener(Mock())
+        listener._poll_device_events = Mock(return_value=False)
+        waits: list[float] = []
+
+        def wait(delay: float) -> bool:
+            waits.append(delay)
+            if len(waits) == 7:
+                listener._stop_poll.set()
+            return False
+
+        listener._stop_poll = SimpleNamespace(
+            is_set=lambda: len(waits) >= 7, set=lambda: None, wait=wait
+        )
+        listener._alarm_poll_loop()
+        self.assertEqual(waits, [15, 60, 120, 240, 480, 600, 600])
+        self.assertEqual(listener._api.login.call_count, 7)
+
+
+class MainsCameraStillTests(unittest.TestCase):
+    """Mains-powered cameras stream briefly to give the dashboard a still."""
+
+    def test_missing_still_triggers_one_short_grab(self):
+        coord = COORDINATOR(Mock(), "user@example.invalid", "x", {"_category": "ipc"})
+        coord._running = True
+        self.assertIsNone(coord.get_latest_image())
+        deadline = coord._live_deadline
+        self.assertGreater(deadline, 0)
+        coord.get_latest_image()
+        self.assertEqual(coord._live_deadline, deadline)
+
+    def test_battery_camera_never_streams_for_stills(self):
+        coord = COORDINATOR(Mock(), "user@example.invalid", "x", {"_category": "snap"})
+        coord._running = True
+        coord.get_latest_image()
+        self.assertEqual(coord._live_deadline, 0.0)
+
+
+if __name__ == "__main__":
+    unittest.main()

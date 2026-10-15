@@ -32,8 +32,10 @@ root if present.
 
 | File | Responsibility |
 |------|----------------|
-| `__init__.py` | `async_setup_entry` / `async_unload_entry`, account-vs-camera entry split, V1→V2 migration, PTZ service registration. |
-| `config_flow.py` | User-facing config + options flows. One account entry, N child camera entries created via `SOURCE_IMPORT`. |
+| `__init__.py` | `async_setup` (runs the legacy-entry migration, registers the PTZ service), `async_setup_entry` / `async_unload_entry` for an account: login, camera discovery (new cameras become subentries; `known_cameras` keeps deleted ones deleted), one coordinator per camera subentry. Coordinators start before the platforms (go2rtc needs a `stream_source` when the camera is added); cloud errors raise `ConfigEntryNotReady`. An update listener reloads only when cameras are added/removed or a video password changes. |
+| `config_flow.py` | Account config flow + options flow (credentials), and `CameraSubentryFlow`: **Add camera** (lists account cameras not yet added) and **Reconfigure** (E2EE video password). |
+| `migration.py` | Folds legacy per-camera entries (config VERSION ≤ 2) into `camera` subentries of their account, moving devices/entities so entity ids and history survive. Orphaned camera entries become the account entry. |
+| `runtime.py` | `AccountRuntime` (coordinators keyed by subentry id) and `add_camera_entities`, which every platform uses to add a camera's entities under its subentry. |
 | `const.py` | All config keys, defaults, app-profile list, alarm-type table, IoT codes. |
 | `api.py` | Meari HTTP client — login, device list, IoT model fetch, wake, OpenAPI bridge. |
 | `manifest.json` | Domain, version, `requirements`, `iot_class`. |
@@ -46,12 +48,12 @@ derived from the camera's IoT model:
 
 | File | Core | IoT-driven |
 |------|------|------------|
-| `camera.py` | Live + idle MPEG-TS stream. | — |
+| `camera.py` | Live + idle MPEG-TS stream (`tcp://`), served to the browser by HA's built-in go2rtc (WebRTC) or HLS. Enabled for battery and mains-powered cameras. | — |
 | `binary_sensor.py` | Motion / Awake / Charging. | — |
 | `button.py` | Wake Camera. | — |
 | `sensor.py` | Battery + Charge Status. | Temperature, Humidity, WiFi Signal. |
 | `number.py` | Motion Timeout. | Sensitivities, intervals, brightness, volume… |
-| `select.py` | Stream Host Mode, Stream Quality. | Day/Night, SD record, anti-flicker… |
+| `select.py` | Stream Host Mode (Local Only / IP / Docker), Stream Quality. | Day/Night, SD record, anti-flicker… |
 | `switch.py` | Wake on Motion. | LED, PIR, ONVIF, HomeKit, sirens… |
 
 IoT entities are gated on `coordinator.supports_iot(feature)` or
@@ -76,20 +78,27 @@ invalid, or the SDK's `-1` default).
 Each select uses the same per-camera option map for display and writes;
 unsupported choices and out-of-range number writes are rejected locally.
 
+Integration-side settings (Stream Quality, Stream Host Mode, Wake on Motion,
+Motion Timeout) are saved in the camera subentry's `data` via
+`CloudEdgeMeariEntity._save_option` and read back by the coordinator on
+setup, so they survive restarts.
+
 ## Coordinator
 
 `custom_components/cloudplus/coordinator/` — the per-camera worker. One
-`CloudEdgeMeariCoordinator` is created per camera entry in `async_setup_entry`.
+`CloudEdgeMeariCoordinator` is created per camera subentry in `async_setup_entry`
+(cameras whose device the user disabled are skipped).
 
 | File | What it does |
 |------|--------------|
-| `__init__.py` | Lifecycle, IoT cache, wake retry loop, video pipeline glue. |
-| `state.py` | Awake / battery / charge state machine, event fan-out. |
+| `__init__.py` | Lifecycle, IoT cache, wake retry loop, video pipeline glue. The cloud session loop backs off 2 s → 5 min between failed logins. |
+| `state.py` | Awake / battery / charge state machine, event fan-out, entity-facing setters, dashboard still (`get_latest_image`). |
 | `motion.py` | Translates raw MQTT alarms into HA binary-sensor pulses. |
 | `iot.py` | Capability parsing and feature checks, IoT value normalization/lookups. |
 | `mpegts.py` + `muxer.py` | ffmpeg-based MPEG-TS muxer (video copy, audio encode). |
 | `audio_encoder.py` | G.711 µ-law → AAC. |
-| `stream_server.py` + `stream_bootstrap.py` | TCP fan-out of MPEG-TS, PAT/PMT seed, idle-stream loop. |
+| `stream_server.py` + `stream_bootstrap.py` | TCP fan-out of MPEG-TS, PAT/PMT seed, idle-stream loop. Listens on loopback unless Stream Host Mode exposes it on the LAN. |
+| `backoff.py` | `RetryBackoff`, the exponential delay shared by the session loop and the motion-event poller. |
 
 ## P2P streamer
 

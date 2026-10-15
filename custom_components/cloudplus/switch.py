@@ -10,10 +10,11 @@ from typing import Any
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import DOMAIN
+from .const import CONF_MOTION_WAKE
 from .coordinator import CloudEdgeMeariCoordinator
+from .runtime import add_camera_entities
 from .entity import CloudEdgeMeariEntity, CloudEdgeMeariIotEntity
 from .meari_commands import (
     ABNORMAL_NOISE_ENABLE,
@@ -133,10 +134,23 @@ IOT_SWITCHES: tuple[IotSwitchSpec, ...] = (
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up CloudEdge / Meari switches from a config entry."""
-    coord: CloudEdgeMeariCoordinator = hass.data[DOMAIN][entry.entry_id]
+
+    def camera_entities(
+        coord: CloudEdgeMeariCoordinator, entry: ConfigEntry
+    ) -> list[SwitchEntity]:
+        return _camera_entities(coord, entry, async_add_entities)
+
+    add_camera_entities(hass, entry, async_add_entities, camera_entities)
+
+
+def _camera_entities(
+    coord: CloudEdgeMeariCoordinator,
+    entry: ConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
+) -> list[SwitchEntity]:
     entities: list[SwitchEntity] = []
     if coord.is_battery_camera:
         entities.append(CloudEdgeMeariMotionWakeSwitch(coord, entry))
@@ -150,13 +164,13 @@ async def async_setup_entry(
         if (spec.feature and coord.supports_iot(spec.feature))
         or coord.has_iot_code(spec.code)
     )
-    async_add_entities(entities)
+    return entities
 
 
 def _add_lamp_switch_when_reported(
     coord: CloudEdgeMeariCoordinator,
     entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Add the Lamp switch once the camera first reports its lamp value.
 
@@ -178,7 +192,10 @@ def _add_lamp_switch_when_reported(
             "Lamp reported for %s after setup; adding the Lamp switch",
             coord.device_name,
         )
-        async_add_entities([CloudEdgeMeariLampSwitch(coord, entry)])
+        async_add_entities(
+            [CloudEdgeMeariLampSwitch(coord, entry)],
+            config_subentry_id=coord.subentry_id,
+        )
 
     @callback
     def _stop_waiting() -> None:
@@ -249,11 +266,13 @@ class CloudEdgeMeariMotionWakeSwitch(CloudEdgeMeariEntity, SwitchEntity):
     async def async_turn_on(self, **_kwargs: Any) -> None:
         """Enable wake on motion."""
         self._coordinator.set_motion_wake_enabled(True)
+        self._save_option(CONF_MOTION_WAKE, True)
         self.async_write_ha_state()
 
     async def async_turn_off(self, **_kwargs: Any) -> None:
         """Disable wake on motion."""
         self._coordinator.set_motion_wake_enabled(False)
+        self._save_option(CONF_MOTION_WAKE, False)
         self.async_write_ha_state()
 
 

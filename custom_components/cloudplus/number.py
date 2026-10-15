@@ -8,10 +8,15 @@ from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, UnitOfTime
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import DOMAIN
+from .const import (
+    CONF_MOTION_TIMEOUT,
+    MOTION_TIMEOUT_MAX,
+    MOTION_TIMEOUT_MIN,
+)
 from .coordinator import CloudEdgeMeariCoordinator
+from .runtime import add_camera_entities
 from .entity import CloudEdgeMeariEntity, CloudEdgeMeariIotNumericEntity
 from .meari_commands import (
     FLIGHT_BRIGHTNESS,
@@ -136,10 +141,15 @@ IOT_NUMBERS: tuple[IotNumberSpec, ...] = (
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up CloudEdge / Meari number entities from a config entry."""
-    coord: CloudEdgeMeariCoordinator = hass.data[DOMAIN][entry.entry_id]
+    add_camera_entities(hass, entry, async_add_entities, _camera_entities)
+
+
+def _camera_entities(
+    coord: CloudEdgeMeariCoordinator, entry: ConfigEntry
+) -> list[NumberEntity]:
     entities: list[NumberEntity] = []
     if coord.is_battery_camera:
         entities.append(CloudEdgeMeariMotionTimeout(coord, entry))
@@ -149,7 +159,7 @@ async def async_setup_entry(
         if coord.supports_iot(spec.feature)
         or (not spec.require_feature and coord.has_iot_code(spec.code))
     )
-    async_add_entities(entities)
+    return entities
 
 
 class CloudEdgeMeariIotNumber(CloudEdgeMeariIotNumericEntity, NumberEntity):
@@ -188,8 +198,8 @@ class CloudEdgeMeariMotionTimeout(CloudEdgeMeariEntity, NumberEntity):
 
     _attr_name = "Motion Timeout"
     _attr_icon = "mdi:timer-outline"
-    _attr_native_min_value = 10
-    _attr_native_max_value = 600
+    _attr_native_min_value = MOTION_TIMEOUT_MIN
+    _attr_native_max_value = MOTION_TIMEOUT_MAX
     _attr_native_step = 10
     _attr_native_unit_of_measurement = UnitOfTime.SECONDS
     _attr_mode = NumberMode.SLIDER
@@ -207,4 +217,5 @@ class CloudEdgeMeariMotionTimeout(CloudEdgeMeariEntity, NumberEntity):
     async def async_set_native_value(self, value: float) -> None:
         """Update the motion timeout."""
         self._coordinator.set_motion_timeout(int(value))
+        self._save_option(CONF_MOTION_TIMEOUT, self._coordinator.motion_timeout)
         self.async_write_ha_state()

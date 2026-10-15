@@ -14,10 +14,12 @@ import paho.mqtt.client as mqtt
 
 from ..api import MeariApiClient
 from ..motion_event import parse_motion_event
+from .backoff import RetryBackoff
 
 _LOGGER = logging.getLogger(__name__)
 ALARM_POLL_INTERVAL = 15.0
 ALARM_POLL_ERROR_INTERVAL = 60.0
+ALARM_POLL_ERROR_MAX_INTERVAL = 600.0
 # Cap on remembered event ids so the dedup set can't grow without bound.
 _SEEN_ALARM_CAP = 4000
 _IMAGE_URL_KEYS = (
@@ -256,18 +258,27 @@ class MotionEventListener:
         # because the broker requires clientId == userID, so a phone logged in
         # to the same account keeps evicting our MQTT session.
         seeded = False
+        failures = 0
+        backoff = RetryBackoff(ALARM_POLL_ERROR_INTERVAL, ALARM_POLL_ERROR_MAX_INTERVAL)
         while not self._stop_poll.is_set():
             try:
                 if not self._poll_device_events(dispatch=seeded):
                     raise RuntimeError("all motion event endpoints failed")
                 seeded = True
+                failures = 0
+                backoff.reset()
                 wait_s = ALARM_POLL_INTERVAL
             except (OSError, RuntimeError, ValueError, KeyError) as exc:
                 _LOGGER.debug("Alarm event poll failed: %s", exc)
+                failures += 1
+                # A first failure is usually an expired token: re-login and
+                # retry promptly. If polling keeps failing even so, back off
+                # rather than logging in again every poll interval.
+                reauthenticated = self._reauthenticate_api()
                 wait_s = (
                     ALARM_POLL_INTERVAL
-                    if self._reauthenticate_api()
-                    else ALARM_POLL_ERROR_INTERVAL
+                    if reauthenticated and failures == 1
+                    else backoff.next_delay()
                 )
             self._stop_poll.wait(wait_s)
 
