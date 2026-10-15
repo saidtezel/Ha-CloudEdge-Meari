@@ -10,12 +10,14 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .coordinator import CloudEdgeMeariCoordinator
 from .runtime import add_camera_entities
 from .entity import CloudEdgeMeariEntity
+from .meari_commands import CRY_DET_ENABLE
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,6 +38,8 @@ def _camera_entities(
     if coord.is_battery_camera:
         entities.append(CloudEdgeMeariAwakeSensor(coord, entry))
         entities.append(CloudEdgeMeariChargingSensor(coord, entry))
+    if coord.supports_iot("cry_det") or coord.has_iot_code(CRY_DET_ENABLE):
+        entities.append(CloudEdgeMeariCryingSensor(coord, entry))
     return entities
 
 
@@ -110,3 +114,49 @@ class CloudEdgeMeariChargingSensor(CloudEdgeMeariEntity, BinarySensorEntity):
         if self._coordinator.battery_percent is None:
             return None
         return self._coordinator.battery_charging
+
+
+class CloudEdgeMeariCryingSensor(CloudEdgeMeariEntity, BinarySensorEntity):
+    """On for a minute after each "Baby cry" alert from the camera.
+
+    Alerts arrive through the same cloud path as motion (MQTT push, or the
+    15 s event poll) and carry no "stopped crying" counterpart, so the
+    sensor turns itself off after the hold time unless another alert lands.
+    """
+
+    _attr_name = "Crying"
+    _attr_device_class = BinarySensorDeviceClass.SOUND
+    _attr_icon = "mdi:emoticon-cry-outline"
+
+    def __init__(
+        self, coordinator: CloudEdgeMeariCoordinator, entry: ConfigEntry
+    ) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{coordinator.device_uuid}_crying"
+        self._unsub_expire: Any = None
+
+    @property
+    def is_on(self) -> bool:
+        return self._coordinator.crying
+
+    @callback
+    def _handle_update(self) -> None:
+        if self._unsub_expire:
+            self._unsub_expire()
+            self._unsub_expire = None
+        if (remaining := self._coordinator.crying_for_s) > 0:
+            self._unsub_expire = async_call_later(
+                self.hass, remaining + 0.1, self._expire
+            )
+        super()._handle_update()
+
+    @callback
+    def _expire(self, _now: Any) -> None:
+        self._unsub_expire = None
+        self.async_write_ha_state()
+
+    async def async_will_remove_from_hass(self) -> None:
+        await super().async_will_remove_from_hass()
+        if self._unsub_expire:
+            self._unsub_expire()
+            self._unsub_expire = None

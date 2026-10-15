@@ -1,4 +1,4 @@
-"""Sensor platform for CloudEdge / Meari — battery level."""
+"""Sensor platform for CloudEdge / Meari — battery, environment, baby status."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from .coordinator import CloudEdgeMeariCoordinator
 from .runtime import add_camera_entities
 from .entity import CloudEdgeMeariEntity, CloudEdgeMeariIotNumericEntity
-from .meari_commands import HUMIDITY, TEMPERATURE, WIFI_STRENGTH
+from .meari_commands import BABY_STATUS, HUMIDITY, TEMPERATURE, WIFI_STRENGTH
 
 # (min percent, icon) ladders, highest threshold first.
 _CHARGING_BATTERY_ICONS = (
@@ -134,7 +134,38 @@ def _camera_entities(
         for spec in IOT_SENSORS
         if _supports_sensor(coord, spec)
     )
+    if coord.has_iot_code(BABY_STATUS):
+        entities.append(CloudEdgeMeariBabyStatusSensor(coord, entry))
     return entities
+
+
+_BABY_STATES = {0: "awake", 1: "crying", 2: "sleeping"}
+
+
+class CloudEdgeMeariBabyStatusSensor(CloudEdgeMeariEntity, SensorEntity):
+    """The camera's own awake / crying / sleeping estimate (IoT 863).
+
+    Polled with the other camera settings (every few minutes): fine for
+    "asleep", too slow for crying, which the Crying binary sensor covers.
+    """
+
+    _attr_name = "Baby Status"
+    _attr_icon = "mdi:baby-face-outline"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = list(_BABY_STATES.values())
+
+    def __init__(
+        self, coordinator: CloudEdgeMeariCoordinator, entry: ConfigEntry
+    ) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{coordinator.device_uuid}_baby_status"
+
+    @property
+    def native_value(self) -> str | None:
+        try:
+            return _BABY_STATES.get(int(self._coordinator.get_iot_value(BABY_STATUS)))
+        except (TypeError, ValueError):
+            return None
 
 
 class CloudEdgeMeariIotSensor(CloudEdgeMeariIotNumericEntity, SensorEntity):

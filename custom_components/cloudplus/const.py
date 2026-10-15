@@ -94,6 +94,8 @@ PTZ_DIRECTIONS: dict[str, tuple[int, int]] = {
 
 # Motion-related alarm types (from motion_detector.py)
 MOTION_ALARM_TYPES = {1, 2, 11, 20}
+# "Baby cry" alerts drive the Crying binary sensor, not Motion.
+CRY_ALARM_TYPES = {7}
 
 ALARM_TYPE_NAMES = {
     1: "PIR",

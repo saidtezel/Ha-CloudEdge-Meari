@@ -43,3 +43,39 @@ ptz:
           max: 20
           step: 0.1
           unit_of_measurement: s
+
+ptz_preset:
+  name: PTZ Preset
+  description: Go to, save or delete a saved PTZ position on a CloudEdge / Meari camera.
+  target:
+    entity:
+      integration: cloudplus
+      domain: camera
+  fields:
+    action:
+      name: Action
+      description: Go to the preset, save the current position as it, or delete it.
+      required: true
+      selector:
+        select:
+          options:
+            - label: Go to
+              value: goto
+            - label: Save current position
+              value: save
+            - label: Delete
+              value: delete
+    preset:
+      name: Preset
+      description: Preset slot number.
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 32
+          mode: box
+    name:
+      name: Name
+      description: Label stored with the preset when saving (defaults to "Preset N").
+      selector:
+        text:

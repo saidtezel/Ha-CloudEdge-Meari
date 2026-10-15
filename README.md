@@ -188,7 +188,16 @@ setup and exposes only those that exist. Expect a subset of:
   Brightness.
 - **Selects**: SD Record Type, Day/Night Mode, Alarm Frequency,
   Sound/Light Alarm Type, Anti-Flicker (50/60 Hz), Full Color Mode.
-- **Sensors**: Temperature, Humidity (on cameras that report them).
+- **Sensors**: Temperature, Humidity, Baby Status (awake / crying /
+  sleeping; polled every few minutes).
+- **Baby monitors** (e.g. Arenti AINanny):
+  - **Lullaby** `media_player` — play / pause / stop / next / previous,
+    volume and repeat for the built-in lullabies and white noise. A track
+    that ends by itself shows as playing until the next status poll.
+  - **Night Light** `light` — on/off and colour. It supersedes the plain
+    *RGB Light* switch, which is hidden on new installs.
+  - **Crying** `binary_sensor` — on for a minute after each cry alert,
+    delivered as fast as motion alerts.
 
 Cameras that don't expose a feature simply won't show its entity.
 
@@ -197,6 +206,7 @@ Cameras that don't expose a feature simply won't show its entity.
 | Service          | Description |
 |------------------|-------------|
 | `cloudplus.ptz`  | Move (`left`/`right`/`up`/`down`) or stop a PTZ camera. Target a `camera` entity. See [services.yaml](custom_components/cloudplus/services.yaml). |
+| `cloudplus.ptz_preset` | `goto`, `save` (the current position) or `delete` preset slot `preset` (1–32) on a PTZ camera. |
 
 ### PTZ from a dashboard (press and hold)
 

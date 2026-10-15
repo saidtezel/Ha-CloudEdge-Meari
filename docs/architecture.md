@@ -50,9 +50,11 @@ derived from the camera's IoT model:
 | File | Core | IoT-driven |
 |------|------|------------|
 | `camera.py` | Live + idle MPEG-TS stream (`tcp://`), served to the browser by HA's built-in go2rtc (WebRTC) or HLS. Enabled for battery and mains-powered cameras. | — |
-| `binary_sensor.py` | Motion / Awake / Charging. | — |
+| `binary_sensor.py` | Motion / Awake / Charging. | Crying (cry alerts, `cry_det`). |
 | `button.py` | Wake Camera. | — |
-| `sensor.py` | Battery + Charge Status. | Temperature, Humidity, WiFi Signal. |
+| `sensor.py` | Battery + Charge Status. | Temperature, Humidity, WiFi Signal, Baby Status (863). |
+| `light.py` | — | Night Light: RGB on/off + colour (197/198, state 1014), when `rgb_light` or 197 is reported. |
+| `media_player.py` | — | Lullaby: play/pause/stop/skip (821, a device action), volume (179), repeat (277); state 1012. Only when music codes are reported. |
 | `number.py` | Motion Timeout. | Sensitivities, intervals, brightness, volume… |
 | `select.py` | Stream Host Mode (Local Only / IP / Docker), Stream Quality. | Day/Night, SD record, anti-flicker… |
 | `switch.py` | Wake on Motion. | LED, PIR, ONVIF, HomeKit, sirens… |

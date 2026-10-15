@@ -32,7 +32,7 @@ def load_platforms() -> dict[str, ModuleType]:
         },
         "homeassistant.components.sensor": {
             "SensorEntity": type("SensorEntity", (), {}),
-            "SensorDeviceClass": SimpleNamespace(TEMPERATURE="temperature", HUMIDITY="humidity", BATTERY="battery"),
+            "SensorDeviceClass": SimpleNamespace(TEMPERATURE="temperature", HUMIDITY="humidity", BATTERY="battery", ENUM="enum"),
             "SensorStateClass": SimpleNamespace(MEASUREMENT="measurement"),
         },
         "homeassistant.components.number": {

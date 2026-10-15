@@ -69,6 +69,22 @@ class PtzController:
             _LOGGER.warning("PTZ stop failed for %s", self._coordinator.device_name)
         return ok
 
+    async def async_preset(self, act: str, preset: int, name: str) -> bool:
+        """Go to / save / delete a preset, in order with moves and stops."""
+        if act == "goto":
+            # The camera drives itself there; no pending auto-stop may cut it short.
+            self._generation += 1
+            self._cancel_auto_stop()
+        async with self._lock:
+            ok = await self._hass.async_add_executor_job(
+                self._coordinator.ptz_preset, act, preset, name
+            )
+        if not ok:
+            _LOGGER.warning(
+                "PTZ preset %s %s failed for %s", act, preset, self._coordinator.device_name
+            )
+        return ok
+
     @callback
     def async_shutdown(self) -> None:
         self._generation += 1
