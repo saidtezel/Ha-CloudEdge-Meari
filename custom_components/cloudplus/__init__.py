@@ -46,6 +46,7 @@ from .migration import (
     camera_subentry_data,
     is_legacy_camera_entry,
 )
+from .ptz import PTZ_MAX_MOVE_S, PtzController
 from .runtime import (
     AccountRuntime,
     account_runtime,
@@ -62,6 +63,8 @@ PLATFORMS = [
     "camera",
     "binary_sensor",
     "button",
+    "light",
+    "media_player",
     "sensor",
     "number",
     "select",
@@ -69,10 +72,25 @@ PLATFORMS = [
 ]
 
 SERVICE_PTZ = "ptz"
+SERVICE_PTZ_PRESET = "ptz_preset"
+PTZ_PRESET_ACTS = {"goto": "goto", "save": "set", "delete": "del"}
+SERVICE_PTZ_PRESET_SCHEMA = vol.Schema(
+    {
+        vol.Required("action"): vol.In(list(PTZ_PRESET_ACTS)),
+        vol.Required("preset"): vol.All(vol.Coerce(int), vol.Range(min=1, max=32)),
+        vol.Optional("name"): str,
+    },
+    extra=vol.ALLOW_EXTRA,
+)
 SERVICE_PTZ_SCHEMA = vol.Schema(
     {
         vol.Required("action"): vol.In(["move", "stop"]),
         vol.Optional("argument"): vol.In(list(PTZ_DIRECTIONS.keys())),
+        # Move this long, then stop: a nudge for dashboards that can't send
+        # a separate stop on release.
+        vol.Optional("duration"): vol.All(
+            vol.Coerce(float), vol.Range(min=0.1, max=PTZ_MAX_MOVE_S)
+        ),
     },
     extra=vol.ALLOW_EXTRA,
 )
@@ -175,6 +193,9 @@ def _add_new_cameras(
 
 
 async def _async_stop_all(runtime: AccountRuntime) -> None:
+    for coord in runtime.coordinators.values():
+        if coord.ptz_controller is not None:
+            coord.ptz_controller.async_shutdown()
     await asyncio.gather(
         *(coord.async_stop() for coord in runtime.coordinators.values())
     )
@@ -233,6 +254,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             settings=subentry.data,
         )
         coord.subentry_id = subentry_id
+        if coord.has_ptz:
+            coord.ptz_controller = PtzController(hass, coord)
         await hass.async_add_executor_job(coord.prefetch_battery, api)
         await hass.async_add_executor_job(coord.prefetch_lamp, api)
         runtime.coordinators[subentry_id] = coord
@@ -293,28 +316,44 @@ def _register_ptz_service(hass: HomeAssistant) -> None:
                 return coord
         return None
 
-    async def _handle_ptz(call: ServiceCall) -> None:
-        action = call.data["action"]
-        argument = call.data.get("argument")
+    def _ptz_cameras(call: ServiceCall) -> list[CloudEdgeMeariCoordinator]:
         entity_ids = call.data.get("entity_id", [])
         if isinstance(entity_ids, str):
             entity_ids = [entity_ids]
+        cameras = []
         for eid in entity_ids:
             c = _find_coordinator(eid)
             if c is None:
                 _LOGGER.warning("PTZ: no coordinator for %s", eid)
-                continue
-            if not c.has_ptz:
+            elif c.ptz_controller is None:
                 _LOGGER.warning("PTZ: %s does not support PTZ", eid)
-                continue
+            else:
+                cameras.append(c)
+        return cameras
+
+    async def _handle_ptz(call: ServiceCall) -> None:
+        action = call.data["action"]
+        argument = call.data.get("argument")
+        for c in _ptz_cameras(call):
             if action == "move":
                 if not argument:
                     _LOGGER.warning("PTZ move requires an argument")
                     continue
-                await hass.async_add_executor_job(c.ptz_move, argument)
+                await c.ptz_controller.async_move(argument, call.data.get("duration"))
             elif action == "stop":
-                await hass.async_add_executor_job(c.ptz_stop)
+                await c.ptz_controller.async_stop()
+
+    async def _handle_ptz_preset(call: ServiceCall) -> None:
+        preset = call.data["preset"]
+        name = call.data.get("name") or f"Preset {preset}"
+        for c in _ptz_cameras(call):
+            await c.ptz_controller.async_preset(
+                PTZ_PRESET_ACTS[call.data["action"]], preset, name
+            )
 
     hass.services.async_register(
         DOMAIN, SERVICE_PTZ, _handle_ptz, schema=SERVICE_PTZ_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_PTZ_PRESET, _handle_ptz_preset, schema=SERVICE_PTZ_PRESET_SCHEMA
     )

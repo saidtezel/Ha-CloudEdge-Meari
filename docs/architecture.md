@@ -35,6 +35,7 @@ root if present.
 | `__init__.py` | `async_setup` (runs the legacy-entry migration, registers the PTZ service), `async_setup_entry` / `async_unload_entry` for an account: login, camera discovery (new cameras become subentries; `known_cameras` keeps deleted ones deleted), one coordinator per camera subentry. Coordinators start before the platforms (go2rtc needs a `stream_source` when the camera is added); cloud errors raise `ConfigEntryNotReady`. An update listener reloads only when cameras are added/removed or a video password changes. |
 | `config_flow.py` | Account config flow + options flow (credentials), and `CameraSubentryFlow`: **Add camera** (lists account cameras not yet added) and **Reconfigure** (E2EE video password). |
 | `migration.py` | Folds legacy per-camera entries (config VERSION ≤ 2) into `camera` subentries of their account, moving devices/entities so entity ids and history survive. Orphaned camera entries become the account entry. |
+| `ptz.py` | `PtzController`: orders one camera's `cloudplus.ptz` move/stop commands, stops a move after its `duration` or after 20 s if the release never arrives. 807/808 vs 841/842 is picked from the `ptz`/`ptz2` capabilities in `coordinator/state.py`. |
 | `runtime.py` | `AccountRuntime` (coordinators keyed by subentry id) and `add_camera_entities`, which every platform uses to add a camera's entities under its subentry. |
 | `const.py` | All config keys, defaults, app-profile list, alarm-type table, IoT codes. |
 | `api.py` | Meari HTTP client — login, device list, IoT model fetch, wake, OpenAPI bridge. |
@@ -49,9 +50,11 @@ derived from the camera's IoT model:
 | File | Core | IoT-driven |
 |------|------|------------|
 | `camera.py` | Live + idle MPEG-TS stream (`tcp://`), served to the browser by HA's built-in go2rtc (WebRTC) or HLS. Enabled for battery and mains-powered cameras. | — |
-| `binary_sensor.py` | Motion / Awake / Charging. | — |
+| `binary_sensor.py` | Motion / Awake / Charging. | Crying (cry alerts, `cry_det`). |
 | `button.py` | Wake Camera. | — |
-| `sensor.py` | Battery + Charge Status. | Temperature, Humidity, WiFi Signal. |
+| `sensor.py` | Battery + Charge Status. | Temperature, Humidity, WiFi Signal, Baby Status (863). |
+| `light.py` | — | Night Light: RGB on/off + colour (197/198, state 1014), when `rgb_light` or 197 is reported. |
+| `media_player.py` | — | Lullaby: play/pause/stop/skip (821, a device action), volume (179), repeat (277); state 1012. Only when music codes are reported. |
 | `number.py` | Motion Timeout. | Sensitivities, intervals, brightness, volume… |
 | `select.py` | Stream Host Mode (Local Only / IP / Docker), Stream Quality. | Day/Night, SD record, anti-flicker… |
 | `switch.py` | Wake on Motion. | LED, PIR, ONVIF, HomeKit, sirens… |

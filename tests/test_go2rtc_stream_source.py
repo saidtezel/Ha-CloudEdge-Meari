@@ -6,6 +6,7 @@ Setup, subentries and migration run against a real HA core in tests/ha.
 from __future__ import annotations
 
 import importlib
+import json
 import unittest
 from types import SimpleNamespace
 from typing import Any
@@ -218,6 +219,50 @@ class MainsCameraStillTests(unittest.TestCase):
         coord._running = True
         coord.get_latest_image()
         self.assertEqual(coord._live_deadline, 0.0)
+
+
+class PtzCodeTests(unittest.TestCase):
+    """807/808 for "ptz" cameras, 841/842 for "ptz2" (and flag-less msc) ones."""
+
+    def sent_with(self, caps: dict) -> tuple[bool, bool]:
+        device = {"capability": {"caps": caps}, "msc": 1}
+        coord = COORDINATOR(Mock(), "user@example.invalid", "x", device)
+        coord._api = Mock()
+        coord.ptz_move("left")
+        coord.ptz_stop()
+        return (
+            coord._api.ptz_start.call_args.kwargs["use_ptz2"],
+            coord._api.ptz_stop.call_args.kwargs["use_ptz2"],
+        )
+
+    def test_capability_picks_the_codes(self):
+        self.assertEqual(self.sent_with({"ptz2": 1}), (True, True))
+        self.assertEqual(self.sent_with({"ptz": 1}), (False, False))
+        self.assertEqual(self.sent_with({"ptz": 1, "ptz2": 1}), (True, True))
+        self.assertEqual(self.sent_with({}), (True, True))
+
+
+class CryAlertTests(unittest.TestCase):
+    """"Baby cry" alerts reach the Crying sensor, never the Motion sensor."""
+
+    def dispatch(self, event_type: int) -> tuple[Mock, Mock]:
+        listener = MOTION.MotionEventListener(Mock())
+        on_motion, on_cry = Mock(), Mock()
+        listener.register(42, "synthetic-camera", on_motion, on_cry=on_cry)
+        listener._handle_payload(
+            json.dumps({"params": {"deviceID": "42", "eventType": event_type}}).encode()
+        )
+        return on_motion, on_cry
+
+    def test_cry_alert(self):
+        on_motion, on_cry = self.dispatch(7)
+        on_cry.assert_called_once_with()
+        on_motion.assert_not_called()
+
+    def test_motion_alert(self):
+        on_motion, on_cry = self.dispatch(2)
+        on_motion.assert_called_once()
+        on_cry.assert_not_called()
 
 
 if __name__ == "__main__":

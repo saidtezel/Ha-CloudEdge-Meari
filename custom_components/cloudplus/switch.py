@@ -219,6 +219,10 @@ class CloudEdgeMeariIotSwitch(CloudEdgeMeariIotEntity, SwitchEntity):
     ) -> None:
         super().__init__(coordinator, entry, spec)
         self._attr_unique_id = f"{coordinator.device_uuid}_iot_switch_{spec.code}"
+        if spec.code == RGB_LIGHT_SWITCH:
+            # Superseded by the Night Light (colour too); kept so existing
+            # automations still work, hidden on new installs.
+            self._attr_entity_registry_visible_default = False
 
     @property
     def is_on(self) -> bool:

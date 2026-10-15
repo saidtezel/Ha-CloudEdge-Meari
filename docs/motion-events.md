@@ -69,9 +69,11 @@ Alarm-type fields the parser looks for, in order:
 See [`const.py`](../custom_components/cloudplus/const.py) `ALARM_TYPE_NAMES`
 and `MOTION_ALARM_TYPES` for the active mapping. The motion binary sensor
 fires for any alarm in `MOTION_ALARM_TYPES = {1, 2, 11, 20}` (PIR, Motion,
-Human body, Person). Other alarm types (Visitor, Noise, Package, etc.) are
-classified by `motion_event.py` but currently routed only to logs / future
-event sensors.
+Human body, Person). `CRY_ALARM_TYPES = {7}` ("Baby cry") goes to a
+separate `on_cry` callback instead and drives the **Crying** binary sensor
+(on for `CRY_HOLD_S` = 60 s after the latest alert; alerts have no "end").
+Other alarm types (Visitor, Noise, Package, etc.) are classified by
+`motion_event.py` but currently routed only to logs / future event sensors.
 
 ## Fallback: cloud event polling
 

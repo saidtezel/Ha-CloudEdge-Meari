@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import socket
 import time
@@ -24,6 +25,7 @@ from ..p2p_streamer import (
     quality_profile_labels,
     supports_adaptive_stream,
 )
+from ..meari_commands import PTZ_PRESET
 from .iot import capability_value, iot_value, normalize_iot_values, supports_feature
 from .stream_server import ANY_BIND_HOST, LOCAL_BIND_HOST
 
@@ -35,6 +37,8 @@ SNAPSHOT_CARD_REQUEST_TTL = 30.0
 IPC_STILL_GRAB_S = 30.0
 IPC_STILL_MAX_AGE_S = 300.0
 IPC_STILL_RETRY_S = 60.0
+# A cry alert keeps the Crying sensor on this long (alerts don't send an "end").
+CRY_HOLD_S = 60.0
 
 
 class CoordinatorStateMixin:
@@ -43,6 +47,7 @@ class CoordinatorStateMixin:
     _latest_image_source: str
     _latest_image_generation: int = 0
     _last_ipc_still_request: float = float("-inf")
+    _last_cry_time: float = 0.0
     _latest_image_updated_at: float
 
     @property
@@ -282,6 +287,31 @@ class CoordinatorStateMixin:
     def set_lamp(self, enabled: bool) -> bool:
         return self.set_iot_value(IOT_CODE_LAMP, 1 if enabled else 0)
 
+    @property
+    def crying(self) -> bool:
+        return self.crying_for_s > 0.0
+
+    @property
+    def crying_for_s(self) -> float:
+        """Seconds the Crying sensor stays on after the latest cry alert."""
+        if self._last_cry_time <= 0.0:
+            return 0.0
+        return max(0.0, self._last_cry_time + CRY_HOLD_S - time.monotonic())
+
+    def _note_cry(self) -> None:
+        self._last_cry_time = time.monotonic()
+        self._fire_update()
+
+    def remember_iot_value(self, code: int | str, value: Any) -> None:
+        """Record a value locally (optimistic state) until the next poll."""
+        self._iot_data.update(normalize_iot_values({code: value}))
+        self._fire_update()
+
+    def send_device_command(self, code: int | str, value: Any) -> bool:
+        """Send an 8xx action straight to the camera (blocking)."""
+        api = self._api
+        return bool(api and api.send_device_command(self._sn_num, str(code), value))
+
     def set_iot_value(self, code: int | str, value: Any) -> bool:
         api = self._api
         if api is None:
@@ -295,15 +325,27 @@ class CoordinatorStateMixin:
             self._fire_update()
         return ok
 
+    @property
+    def _uses_ptz2(self) -> bool:
+        # IoT 841/842 for "ptz2" cameras, 807/808 for cameras advertising only
+        # "ptz"; anything else (e.g. only the msc flag) keeps 841/842.
+        caps = self._capabilities
+        return bool(capability_value(caps, "ptz2")) or not capability_value(caps, "ptz")
+
     def ptz_move(self, direction: str) -> bool:
         api = self._api
         if api is None or direction not in PTZ_DIRECTIONS:
             return False
-        return api.ptz_start(self._sn_num, direction)
+        return api.ptz_start(self._sn_num, direction, use_ptz2=self._uses_ptz2)
 
     def ptz_stop(self) -> bool:
         api = self._api
-        return bool(api and api.ptz_stop(self._sn_num))
+        return bool(api and api.ptz_stop(self._sn_num, use_ptz2=self._uses_ptz2))
+
+    def ptz_preset(self, act: str, preset: int, name: str) -> bool:
+        """Go to / save / delete a preset (IoT 848; act is goto, set or del)."""
+        value = json.dumps({"id": preset, "name": name, "act": act}, separators=(",", ":"))
+        return self.send_device_command(PTZ_PRESET, value)
 
     def wake_camera(self) -> None:
         self._wake_event.set()

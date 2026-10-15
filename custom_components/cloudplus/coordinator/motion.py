@@ -13,6 +13,7 @@ from typing import Any, Callable
 import paho.mqtt.client as mqtt
 
 from ..api import MeariApiClient
+from ..const import CRY_ALARM_TYPES
 from ..motion_event import parse_motion_event
 from .backoff import RetryBackoff
 
@@ -119,6 +120,8 @@ class MotionEventListener:
         self._callbacks: list[
             tuple[str, str, Callable[[str, bytes | None], None]]
         ] = []
+        # Cry alerts are not motion: they get their own per-camera callbacks.
+        self._cry_callbacks: list[tuple[str, str, Callable[[], None]]] = []
         self._lock = threading.Lock()
         self._stop_poll = threading.Event()
         self._poll_thread: threading.Thread | None = None
@@ -136,17 +139,22 @@ class MotionEventListener:
         device_id: int,
         sn_num: str,
         on_motion: Callable[[str, bytes | None], None],
+        on_cry: Callable[[], None] | None = None,
     ) -> Callable[[], None]:
         item = (str(device_id), str(sn_num), on_motion)
+        cry_item = (str(device_id), str(sn_num), on_cry) if on_cry else None
         with self._lock:
             self._callbacks.append(item)
+            if cry_item:
+                self._cry_callbacks.append(cry_item)
 
         def unsubscribe() -> None:
             with self._lock:
-                try:
-                    self._callbacks.remove(item)
-                except ValueError:
-                    pass
+                for registered, entry in ((self._callbacks, item), (self._cry_callbacks, cry_item)):
+                    try:
+                        registered.remove(entry)
+                    except ValueError:
+                        pass
 
         return unsubscribe
 
@@ -395,11 +403,11 @@ class MotionEventListener:
         return event_log_ok or summary_ok
 
     def _matching_callbacks(
-        self, device_id: str, license_id: str
-    ) -> list[tuple[str, Callable[[str, bytes | None], None]]]:
+        self, device_id: str, license_id: str, *, cry: bool = False
+    ) -> list[tuple[str, Callable[..., None]]]:
         with self._lock:
-            callbacks = list(self._callbacks)
-        out: list[tuple[str, Callable[[str, bytes | None], None]]] = []
+            callbacks = list(self._cry_callbacks if cry else self._callbacks)
+        out: list[tuple[str, Callable[..., None]]] = []
         for registered_device_id, registered_sn, callback in callbacks:
             if device_id and device_id == registered_device_id:
                 out.append((registered_sn, callback))
@@ -413,12 +421,16 @@ class MotionEventListener:
         except (ValueError, KeyError, TypeError) as exc:
             _LOGGER.debug("MQTT motion payload parse failed: %s", exc)
             return
-        if not event or not event["is_motion"]:
+        if not event:
             return
-
         device_id = event["device_id"]
         license_id = event["license_id"]
         if not device_id and not license_id:
+            return
+        if event["evt_int"] in CRY_ALARM_TYPES:
+            for _sn, on_cry in self._matching_callbacks(device_id, license_id, cry=True):
+                on_cry()
+        if not event["is_motion"]:
             return
 
         motion_type = str(event["evt_name"])

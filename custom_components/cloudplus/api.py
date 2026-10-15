@@ -908,52 +908,38 @@ class MeariApiClient:
         )
         return resp.get("action") == "set"
 
-    def ptz_start(self, sn_num: str, direction: str, *, use_ptz2: bool = True) -> bool:
-        """Send a PTZ start command for the given direction.
+    def send_device_command(self, sn_num: str, code: str, value: Any) -> bool:
+        """Send an action code (800-899) straight to the camera.
 
-        Uses IoT code 841 (ptz2) when *use_ptz2* is True, else 807 (ptz).
-        The command is sent WITHOUT ``target=server`` so it reaches the
-        device directly (as the official app does for codes 800-899).
+        Unlike :meth:`set_device_iot_value` this omits ``target=server``, so
+        the command reaches the device instead of being stored server-side,
+        as the official app does for codes 800-899.
         """
+        params_payload = json.dumps(
+            {"code": 100001, "action": "set", "name": "iot", "iot": {code: value}},
+            separators=(",", ":"),
+        )
+        resp = self._openapi_get(
+            "/openapi/device/config",
+            {
+                "action": "set",
+                "params": base64.b64encode(params_payload.encode()).decode(),
+                "deviceid": format_sn(sn_num),
+            },
+        )
+        return "errid" not in resp
+
+    def ptz_start(self, sn_num: str, direction: str, *, use_ptz2: bool = True) -> bool:
+        """Start moving in *direction*: IoT 841 (ptz2) or 807 (ptz)."""
         ps, ts = PTZ_DIRECTIONS.get(direction, (0, 0))
         code = IOT_CODE_PTZ2_START if use_ptz2 else IOT_CODE_PTZ_START
-        value_str = json.dumps({"ps": ps, "ts": ts, "zs": 0}, separators=(",", ":"))
-
-        dev_uuid = format_sn(sn_num)
-        params_payload = json.dumps(
-            {"code": 100001, "action": "set", "name": "iot", "iot": {code: value_str}},
-            separators=(",", ":"),
-        )
-        params_b64 = base64.b64encode(params_payload.encode()).decode()
-        resp = self._openapi_get(
-            "/openapi/device/config",
-            {
-                "action": "set",
-                "params": params_b64,
-                "deviceid": dev_uuid,
-            },
-        )
-        return "errid" not in resp
+        value = json.dumps({"ps": ps, "ts": ts, "zs": 0}, separators=(",", ":"))
+        return self.send_device_command(sn_num, code, value)
 
     def ptz_stop(self, sn_num: str, *, use_ptz2: bool = True) -> bool:
-        """Send a PTZ stop command."""
+        """Stop moving: IoT 842 (ptz2) or 808 (ptz)."""
         code = IOT_CODE_PTZ2_STOP if use_ptz2 else IOT_CODE_PTZ_STOP
-
-        dev_uuid = format_sn(sn_num)
-        params_payload = json.dumps(
-            {"code": 100001, "action": "set", "name": "iot", "iot": {code: "{}"}},
-            separators=(",", ":"),
-        )
-        params_b64 = base64.b64encode(params_payload.encode()).decode()
-        resp = self._openapi_get(
-            "/openapi/device/config",
-            {
-                "action": "set",
-                "params": params_b64,
-                "deviceid": dev_uuid,
-            },
-        )
-        return "errid" not in resp
+        return self.send_device_command(sn_num, code, "{}")
 
     def wake_device(self, sn_num: str, device_id: int) -> bool:
         """Wake a dormant camera using both OpenAPI and HTTP methods."""

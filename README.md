@@ -188,7 +188,16 @@ setup and exposes only those that exist. Expect a subset of:
   Brightness.
 - **Selects**: SD Record Type, Day/Night Mode, Alarm Frequency,
   Sound/Light Alarm Type, Anti-Flicker (50/60 Hz), Full Color Mode.
-- **Sensors**: Temperature, Humidity (on cameras that report them).
+- **Sensors**: Temperature, Humidity, Baby Status (awake / crying /
+  sleeping; polled every few minutes).
+- **Baby monitors** (e.g. Arenti AINanny):
+  - **Lullaby** `media_player` — play / pause / stop / next / previous,
+    volume and repeat for the built-in lullabies and white noise. A track
+    that ends by itself shows as playing until the next status poll.
+  - **Night Light** `light` — on/off and colour. It supersedes the plain
+    *RGB Light* switch, which is hidden on new installs.
+  - **Crying** `binary_sensor` — on for a minute after each cry alert,
+    delivered as fast as motion alerts.
 
 Cameras that don't expose a feature simply won't show its entity.
 
@@ -197,6 +206,49 @@ Cameras that don't expose a feature simply won't show its entity.
 | Service          | Description |
 |------------------|-------------|
 | `cloudplus.ptz`  | Move (`left`/`right`/`up`/`down`) or stop a PTZ camera. Target a `camera` entity. See [services.yaml](custom_components/cloudplus/services.yaml). |
+| `cloudplus.ptz_preset` | `goto`, `save` (the current position) or `delete` preset slot `preset` (1–32) on a PTZ camera. |
+
+### PTZ from a dashboard (press and hold)
+
+Meari cameras pan/tilt on *start* and keep going until *stop*, exactly like
+holding a direction in the official app. `cloudplus.ptz` mirrors that:
+`action: move` on press, `action: stop` on release. Commands for one camera
+are sent in order (a quick tap's stop never overtakes its move), and a move
+that is never stopped (closed tab, lost connection) stops on its own after
+20 seconds.
+
+Home Assistant's built-in cards can't send anything on *release*, so for
+hold-to-move use a card that can, e.g. the
+[WebRTC Camera](https://github.com/AlexxIT/WebRTC) card: it calls
+`data_start_<direction>` on press and `data_end_<direction>` on release.
+
+```yaml
+type: custom:webrtc-camera
+entity: camera.cloudedge_meari_yard_camera
+ptz:
+  service: cloudplus.ptz
+  data_start_left:  {entity_id: camera.cloudedge_meari_yard_camera, action: move, argument: left}
+  data_end_left:    {entity_id: camera.cloudedge_meari_yard_camera, action: stop}
+  data_start_right: {entity_id: camera.cloudedge_meari_yard_camera, action: move, argument: right}
+  data_end_right:   {entity_id: camera.cloudedge_meari_yard_camera, action: stop}
+  data_start_up:    {entity_id: camera.cloudedge_meari_yard_camera, action: move, argument: up}
+  data_end_up:      {entity_id: camera.cloudedge_meari_yard_camera, action: stop}
+  data_start_down:  {entity_id: camera.cloudedge_meari_yard_camera, action: move, argument: down}
+  data_end_down:    {entity_id: camera.cloudedge_meari_yard_camera, action: stop}
+```
+
+With built-in cards (tile, button, picture-glance), use a **nudge** instead:
+add `duration` and each tap moves for that long, then stops.
+
+```yaml
+tap_action:
+  action: perform-action
+  perform_action: cloudplus.ptz
+  data: {entity_id: camera.cloudedge_meari_yard_camera, action: move, argument: left, duration: 0.5}
+```
+
+Each command is a round trip to the Meari cloud, so expect a fraction of a
+second between pressing and the camera moving.
 
 ---
 
