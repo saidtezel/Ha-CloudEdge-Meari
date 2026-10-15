@@ -64,7 +64,7 @@ async def _camera_stream_source(mods: dict[str, Any], coord: Any) -> str:
     if not source:
         raise RuntimeError("Camera stream source is unavailable")
     parsed = urlparse(source)
-    if parsed.scheme == "tcp" and parsed.port:
+    if parsed.scheme in ("tcp", "http") and parsed.port:
         # debug.py runs on the same host as the stream server, so force
         # loopback to avoid LAN-address selection issues.
         source = f"tcp://127.0.0.1:{parsed.port}"

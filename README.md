@@ -301,8 +301,10 @@ cameras so they use the same wake/idle-stream lifecycle.
 Home Assistant 2024.11+ ships go2rtc and uses it for low-latency WebRTC
 live view (it is part of `default_config`). The camera entity works with it
 out of the box — no add-on, YAML or extra integration needed: HA hands the
-camera's `tcp://` MPEG-TS source to its go2rtc, which serves the video
-as-is and transcodes the AAC audio to Opus for the browser.
+camera's `http://` MPEG-TS source to its go2rtc, which serves the video
+as-is and transcodes the AAC audio to Opus for the browser. Cards that use
+HA's camera WebRTC, such as the WebRTC Camera card with `entity:`, go
+through the same path.
 
 - **H.264** (typically `SD`) plays over WebRTC in every browser.
 - **HEVC / H.265** (typically `HD`, `QHD`, `AUTO`) only plays over WebRTC
@@ -324,12 +326,12 @@ The `Stream Host Mode` select entity controls who can connect to the
 MPEG-TS server and how its URL is advertised:
 
 - `Local Only` (default) — listens on `127.0.0.1` only
-  (`tcp://127.0.0.1:36059`). HA's live view (built-in go2rtc / WebRTC and
+  (`http://127.0.0.1:36059/`). HA's live view (built-in go2rtc / WebRTC and
   HLS) works; nothing else on your network can open the stream. The stream
   carries decrypted video and has no authentication, so keep this unless
   another machine or container needs it.
 - `IP Address` — listens on all interfaces and advertises the HA host's LAN
-  IP (e.g. `tcp://192.168.1.10:36059`). Pick this for Frigate or a
+  IP (e.g. `http://192.168.1.10:36059/`). Pick this for Frigate or a
   standalone go2rtc on another host or container that reaches HA by IP.
 - `Docker Hostname` — listens on all interfaces and advertises the
   container's hostname instead. Pick this if Frigate / go2rtc runs in the
@@ -362,7 +364,8 @@ Authorization: Bearer <long-lived-access-token>
 ```
 
 The response body is the current stream URL (e.g.
-`tcp://192.168.1.10:36059`). go2rtc can call that endpoint on every stream
+`http://192.168.1.10:36059/`; the same port also still answers raw `tcp://`
+for older configs). go2rtc can call that endpoint on every stream
 open via its `echo:` source type, which uses the stdout of an arbitrary
 command as the URL:
 

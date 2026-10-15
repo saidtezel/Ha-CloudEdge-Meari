@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import importlib
 import json
+import socket
+import time
 import unittest
 from types import SimpleNamespace
 from typing import Any
@@ -20,6 +22,7 @@ CAMERA = MODULES["camera"]
 CONST = MODULES["const"]
 BACKOFF = importlib.import_module("custom_components.cloudplus.coordinator.backoff")
 MOTION = importlib.import_module("custom_components.cloudplus.coordinator.motion")
+STREAM_SERVER = importlib.import_module("custom_components.cloudplus.coordinator.stream_server")
 
 
 def make_camera(port: int = 40000, host: str = "192.0.2.10") -> Any:
@@ -47,7 +50,7 @@ class CameraStreamSourceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_stream_source_is_tcp_mpegts(self):
         camera, _coord, _tasks = make_camera()
-        self.assertEqual(await camera.stream_source(), "tcp://192.0.2.10:40000")
+        self.assertEqual(await camera.stream_source(), "http://192.0.2.10:40000/")
 
     async def test_no_port_means_no_source(self):
         camera, _coord, _tasks = make_camera(port=0)
@@ -69,7 +72,7 @@ class CameraStreamSourceTests(unittest.IsolatedAsyncioTestCase):
         camera._handle_update()
         self.assertEqual(len(tasks), 1)
         await tasks[0]
-        camera.stream.update_source.assert_called_once_with("tcp://cloudplus-ha:40001")
+        camera.stream.update_source.assert_called_once_with("http://cloudplus-ha:40001/")
         camera.async_refresh_providers.assert_awaited_once()
         camera._handle_update()
         self.assertEqual(len(tasks), 1)
@@ -263,6 +266,59 @@ class CryAlertTests(unittest.TestCase):
         on_motion, on_cry = self.dispatch(2)
         on_motion.assert_called_once()
         on_cry.assert_not_called()
+
+
+class StreamProtocolTests(unittest.TestCase):
+    """One port serves raw TCP (legacy tcp:// configs) and HTTP (stream_source)."""
+
+    PACKET = b"\x47" + bytes(187)
+
+    def setUp(self):
+        self.server = STREAM_SERVER.StreamServer()
+        self.server.start()
+        self.addCleanup(self.server.stop)
+
+    def connect(self) -> socket.socket:
+        sock = socket.create_connection(("127.0.0.1", self.server.port), timeout=5)
+        self.addCleanup(sock.close)
+        return sock
+
+    def wait_for_client(self, count: int = 1) -> None:
+        for _ in range(100):
+            if self.server.client_count >= count:
+                return
+            time.sleep(0.01)
+        self.fail("client never registered")
+
+    def read(self, sock: socket.socket, size: int) -> bytes:
+        data = b""
+        while len(data) < size:
+            chunk = sock.recv(size - len(data))
+            if not chunk:
+                break
+            data += chunk
+        return data
+
+    def test_raw_tcp_client_gets_bare_mpegts(self):
+        sock = self.connect()
+        self.wait_for_client()
+        time.sleep(STREAM_SERVER.HTTP_REQUEST_WAIT_S + 0.2)
+        self.server.broadcast(self.PACKET)
+        self.assertEqual(self.read(sock, 188), self.PACKET)
+
+    def test_http_client_gets_response_then_mpegts(self):
+        sock = self.connect()
+        sock.sendall(b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nUser-Agent: go2rtc\r\n\r\n")
+        self.wait_for_client()
+        header = self.read(sock, len(STREAM_SERVER.HTTP_RESPONSE))
+        self.assertEqual(header, STREAM_SERVER.HTTP_RESPONSE)
+        self.server.broadcast(self.PACKET)
+        self.assertEqual(self.read(sock, 188), self.PACKET)
+
+    def test_head_request_gets_headers_only(self):
+        sock = self.connect()
+        sock.sendall(b"HEAD / HTTP/1.1\r\nHost: x\r\n\r\n")
+        self.assertEqual(self.read(sock, 4096), STREAM_SERVER.HTTP_RESPONSE)
 
 
 if __name__ == "__main__":

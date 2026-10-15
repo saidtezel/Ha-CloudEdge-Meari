@@ -36,8 +36,9 @@ class CloudEdgeMeariCamera(CloudEdgeMeariEntity, Camera):
     """Representation of a CloudEdge / Meari camera.
 
     The MPEG-TS URL from ``stream_source`` is all HA needs: its built-in
-    go2rtc integration accepts ``tcp://`` sources and serves them over WebRTC,
-    with HLS from the ``stream`` component as the fallback.
+    go2rtc integration serves it over WebRTC, with HLS from the ``stream``
+    component as the fallback. It is ``http://``: HA's go2rtc client fails on
+    a connected ``tcp://`` source (see ``stream_server``).
     """
 
     _attr_name = "Camera"
@@ -63,7 +64,7 @@ class CloudEdgeMeariCamera(CloudEdgeMeariEntity, Camera):
         if not port:
             return None
         host = self._coordinator.stream_host
-        return f"tcp://{host}:{port}"
+        return f"http://{host}:{port}/"
 
     async def stream_source(self) -> str | None:
         """Return MPEG-TS stream URL for HA stream, go2rtc and Frigate."""

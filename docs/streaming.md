@@ -191,6 +191,10 @@ stale client joins, and source-idle recovery, but not while video is current.
 - The local TCP listener is health-checked whenever HA requests a stream
   source. If its accept thread stopped unexpectedly, it is recreated and HA
   receives the new port instead of repeatedly opening a dead endpoint.
+- The same port speaks raw TCP and HTTP: a client that opens with `GET`
+  gets an HTTP 200 header, then the stream. `stream_source` is `http://`
+  because go2rtc reports a connected `tcp://` source without a `url`, which
+  HA's go2rtc client rejects; that failed every WebRTC offer on the server.
 - The listener binds to `127.0.0.1` by default (Stream Host Mode *Local
   Only*): HA's `stream` worker and its bundled go2rtc both connect over
   loopback. *IP Address* / *Docker Hostname* rebind it to `0.0.0.0` for LAN
