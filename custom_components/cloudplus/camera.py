@@ -43,7 +43,6 @@ class CloudEdgeMeariCamera(CloudEdgeMeariEntity, Camera):
     ) -> None:
         """Initialize the camera."""
         super().__init__(coordinator, entry)
-        self._attr_entity_registry_enabled_default = coordinator.is_battery_camera
         self._attr_unique_id = f"{coordinator.device_uuid}_camera"
         self._last_stream_source: str | None = None
 

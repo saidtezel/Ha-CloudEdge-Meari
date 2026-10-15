@@ -123,7 +123,11 @@ All cloud requests have finite connect/read timeouts. If both event-log
 sources fail, the account-scoped listener performs a fresh platform login,
 updates the MQTT credentials used for later reconnects, and resumes polling.
 This prevents an expired token or a wedged HTTPS connection from leaving
-motion delivery permanently stopped until Home Assistant restarts.
+motion delivery permanently stopped until Home Assistant restarts. Only the
+first failure is retried at the normal 15 s cadence; if polls keep failing
+(or the login itself fails) the wait doubles from 60 s up to 10 min, and
+resets on the next successful poll, so a broken account never turns into a
+login every 15 s.
 
 ## Practical guidance
 

@@ -10,7 +10,7 @@ from homeassistant.config_entries import (
     ConfigEntryDisabler,
     SOURCE_IMPORT,
 )
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -242,6 +242,22 @@ async def _disable_account_camera_entries(
 # ---------------------------------------------------------------------------
 
 
+@callback
+def _enable_mains_camera_entity(hass: HomeAssistant, coord: CloudEdgeMeariCoordinator) -> None:
+    """Re-enable a camera entity left disabled by an old integration default.
+
+    Earlier versions created the camera entity of mains-powered cameras
+    disabled. Only that integration default is undone; a camera the user
+    disabled themselves stays disabled.
+    """
+    ent_reg = er.async_get(hass)
+    entity_id = ent_reg.async_get_entity_id("camera", DOMAIN, f"{coord.device_uuid}_camera")
+    reg_entry = ent_reg.async_get(entity_id) if entity_id else None
+    if reg_entry and reg_entry.disabled_by is er.RegistryEntryDisabler.INTEGRATION:
+        _LOGGER.info("Enabling camera entity %s", entity_id)
+        ent_reg.async_update_entity(entity_id, disabled_by=None)
+
+
 async def _async_login(
     hass: HomeAssistant, api: MeariApiClient, entry: ConfigEntry
 ) -> bool:
@@ -362,6 +378,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.async_add_executor_job(coord.prefetch_lamp, api)
 
     hass.data[DOMAIN][entry.entry_id] = coord
+    _enable_mains_camera_entity(hass, coord)
 
     # Start before the platforms so the camera entity has a stream_source when
     # it is added: that is when HA picks its WebRTC provider (go2rtc).

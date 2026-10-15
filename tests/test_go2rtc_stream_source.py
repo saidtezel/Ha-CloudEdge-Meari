@@ -16,10 +16,20 @@ MODULES = _bootstrap_integration_modules()
 COORDINATOR = MODULES["coordinator"].CloudEdgeMeariCoordinator
 CAMERA = MODULES["camera"]
 CONST = MODULES["const"]
+BACKOFF = importlib.import_module("custom_components.cloudplus.coordinator.backoff")
+MOTION = importlib.import_module("custom_components.cloudplus.coordinator.motion")
 
 
 class ConfigEntryNotReady(Exception):
     """Stub of HA's ConfigEntryNotReady."""
+
+
+def registry(disabled_by: str | None) -> Mock:
+    """Entity registry holding the camera entity, if ``disabled_by`` is given."""
+    reg = Mock()
+    reg.async_get_entity_id.return_value = None if disabled_by is None else "camera.synthetic"
+    reg.async_get.return_value = SimpleNamespace(disabled_by=disabled_by)
+    return reg
 
 
 def load_integration() -> ModuleType:
@@ -38,7 +48,10 @@ def load_integration() -> ModuleType:
         },
         "homeassistant.exceptions": {"ConfigEntryNotReady": ConfigEntryNotReady},
         "homeassistant.helpers.device_registry": {},
-        "homeassistant.helpers.entity_registry": {},
+        "homeassistant.helpers.entity_registry": {
+            "RegistryEntryDisabler": SimpleNamespace(INTEGRATION="integration", USER="user"),
+            "async_get": Mock(return_value=registry(None)),
+        },
     }.items():
         module = ModuleType(name)
         vars(module).update(attributes)
@@ -132,7 +145,7 @@ class PersistedSettingsTests(unittest.TestCase):
 
     def test_defaults(self):
         coord = self.build({})
-        self.assertEqual(coord.stream_host_mode, "ip")
+        self.assertEqual(coord.stream_host_mode, "local")
         self.assertTrue(coord.motion_wake_enabled)
         self.assertEqual(coord.motion_timeout, CONST.DEFAULT_MOTION_TIMEOUT)
 
@@ -151,7 +164,7 @@ class PersistedSettingsTests(unittest.TestCase):
             CONST.CONF_STREAM_HOST_MODE: "bogus",
             CONST.CONF_MOTION_TIMEOUT: 99999,
         })
-        self.assertEqual(coord.stream_host_mode, "ip")
+        self.assertEqual(coord.stream_host_mode, "local")
         self.assertEqual(coord.motion_timeout, CONST.MOTION_TIMEOUT_MAX)
         self.assertEqual(self.build({CONST.CONF_MOTION_TIMEOUT: "bad"}).motion_timeout,
                          CONST.DEFAULT_MOTION_TIMEOUT)
@@ -222,6 +235,125 @@ class CameraEntrySetupTests(unittest.IsolatedAsyncioTestCase):
         self.api.login.side_effect = PermissionError("Login failed: 1003")
         self.assertFalse(await self.setup_entry())
         self.coord.async_start.assert_not_awaited()
+
+    async def test_integration_disabled_camera_is_enabled(self):
+        reg = registry("integration")
+        with patch.object(INTEGRATION.er, "async_get", return_value=reg):
+            self.assertTrue(await self.setup_entry())
+        reg.async_update_entity.assert_called_once_with("camera.synthetic", disabled_by=None)
+
+    async def test_user_disabled_camera_stays_disabled(self):
+        reg = registry("user")
+        with patch.object(INTEGRATION.er, "async_get", return_value=reg):
+            self.assertTrue(await self.setup_entry())
+        reg.async_update_entity.assert_not_called()
+
+
+class LocalOnlyStreamTests(unittest.TestCase):
+    """The stream listens on loopback unless a LAN mode is chosen."""
+
+    def build(self, options: dict) -> Any:
+        entry = SimpleNamespace(options=options)
+        return COORDINATOR(Mock(), "user@example.invalid", "x", {}, entry=entry)
+
+    def bound_host(self, coord: Any) -> str:
+        return coord._stream_server._sock.getsockname()[0]
+
+    def test_default_is_loopback(self):
+        coord = self.build({})
+        coord._stream_server.start()
+        try:
+            self.assertEqual(self.bound_host(coord), "127.0.0.1")
+            self.assertEqual(coord.stream_host, "127.0.0.1")
+        finally:
+            coord._stream_server.stop()
+
+    def test_lan_mode_rebinds_and_back(self):
+        coord = self.build({})
+        coord._stream_server.start()
+        try:
+            coord.set_stream_host_mode("ip")
+            self.assertEqual(self.bound_host(coord), "0.0.0.0")
+            self.assertNotEqual(coord.stream_host, "")
+            coord.set_stream_host_mode("local")
+            self.assertEqual(self.bound_host(coord), "127.0.0.1")
+            self.assertGreater(coord._stream_server.port, 0)
+        finally:
+            coord._stream_server.stop()
+
+    def test_saved_lan_mode_binds_all_interfaces(self):
+        coord = self.build({CONST.CONF_STREAM_HOST_MODE: "docker"})
+        coord._stream_server.start()
+        try:
+            self.assertEqual(self.bound_host(coord), "0.0.0.0")
+        finally:
+            coord._stream_server.stop()
+
+
+class RetryBackoffTests(unittest.TestCase):
+    """Cloud retries slow down instead of hammering the login endpoint."""
+
+    def test_doubles_to_cap_and_resets_after_healthy_run(self):
+        backoff = BACKOFF.RetryBackoff(2, 300)
+        self.assertEqual([backoff.next_delay() for _ in range(10)],
+                         [2, 4, 8, 16, 32, 64, 128, 256, 300, 300])
+        self.assertEqual(backoff.next_delay(ran_for_s=3600), 2)
+
+    def test_watch_loop_backs_off_on_rejected_login(self):
+        coord = COORDINATOR(Mock(), "user@example.invalid", "x", {})
+        coord._running = True
+        delays: list[float] = []
+
+        def wait(delay: float) -> bool:
+            delays.append(delay)
+            if len(delays) == 6:
+                coord._running = False
+            return False
+
+        coord._stop_event = SimpleNamespace(wait=wait)
+        client = Mock()
+        client.return_value.login.side_effect = PermissionError("Login failed: 1003")
+        with patch.object(MODULES["coordinator"], "MeariApiClient", client), \
+                self.assertLogs(MODULES["coordinator"].__name__, "WARNING"):
+            coord._watch_loop()
+        self.assertEqual(delays, [2, 4, 8, 16, 32, 64])
+
+    def test_motion_poll_backs_off_when_polls_keep_failing(self):
+        listener = MOTION.MotionEventListener(Mock())
+        listener._poll_device_events = Mock(return_value=False)
+        waits: list[float] = []
+
+        def wait(delay: float) -> bool:
+            waits.append(delay)
+            if len(waits) == 7:
+                listener._stop_poll.set()
+            return False
+
+        listener._stop_poll = SimpleNamespace(
+            is_set=lambda: len(waits) >= 7, set=lambda: None, wait=wait
+        )
+        listener._alarm_poll_loop()
+        self.assertEqual(waits, [15, 60, 120, 240, 480, 600, 600])
+        self.assertEqual(listener._api.login.call_count, 7)
+
+
+class MainsCameraStillTests(unittest.TestCase):
+    """Mains-powered cameras stream briefly to give the dashboard a still."""
+
+    def test_missing_still_triggers_one_short_grab(self):
+        coord = COORDINATOR(Mock(), "user@example.invalid", "x", {"_category": "ipc"})
+        coord._running = True
+        self.assertIsNone(coord.get_latest_image())
+        deadline = coord._live_deadline
+        self.assertGreater(deadline, 0)
+        coord.get_latest_image()
+        self.assertEqual(coord._live_deadline, deadline)
+
+    def test_battery_camera_never_streams_for_stills(self):
+        coord = COORDINATOR(Mock(), "user@example.invalid", "x", {"_category": "snap"})
+        coord._running = True
+        coord.get_latest_image()
+        self.assertEqual(coord._live_deadline, 0.0)
 
 
 if __name__ == "__main__":

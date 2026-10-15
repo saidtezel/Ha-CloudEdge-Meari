@@ -9,7 +9,12 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CONF_STREAM_HOST_MODE, CONF_STREAM_QUALITY, DOMAIN
+from .const import (
+    CONF_STREAM_HOST_MODE,
+    CONF_STREAM_QUALITY,
+    DEFAULT_STREAM_HOST_MODE,
+    DOMAIN,
+)
 from .coordinator import CloudEdgeMeariCoordinator
 from .entity import CloudEdgeMeariEntity, CloudEdgeMeariIotEntity
 from .meari_commands import (
@@ -22,6 +27,7 @@ from .meari_commands import (
 )
 
 STREAM_HOST_OPTIONS: dict[str, str] = {
+    "local": "Local Only",
     "ip": "IP Address",
     "docker": "Docker Hostname",
 }
@@ -211,7 +217,7 @@ class CloudEdgeMeariIotSelect(CloudEdgeMeariIotEntity, SelectEntity):
 
 
 class CloudEdgeMeariStreamHostSelect(CloudEdgeMeariEntity, SelectEntity):
-    """Select entity to choose between IP address or Docker hostname for stream URL."""
+    """Select how the MPEG-TS stream is exposed: loopback only, LAN IP or Docker hostname."""
 
     _attr_name = "Stream Host Mode"
     _attr_icon = "mdi:ip-network"
@@ -226,13 +232,16 @@ class CloudEdgeMeariStreamHostSelect(CloudEdgeMeariEntity, SelectEntity):
     @property
     def current_option(self) -> str:
         mode = self._coordinator.stream_host_mode
-        return STREAM_HOST_OPTIONS.get(mode, STREAM_HOST_OPTIONS["ip"])
+        return STREAM_HOST_OPTIONS.get(mode, STREAM_HOST_OPTIONS[DEFAULT_STREAM_HOST_MODE])
 
     async def async_select_option(self, option: str) -> None:
         """Change stream host mode."""
         key = _OPTION_TO_KEY.get(option)
         if key:
-            self._coordinator.set_stream_host_mode(key)
+            # Rebinding the listener joins its accept thread; keep it off the loop.
+            await self.hass.async_add_executor_job(
+                self._coordinator.set_stream_host_mode, key
+            )
             self._save_option(CONF_STREAM_HOST_MODE, key)
         self.async_write_ha_state()
 

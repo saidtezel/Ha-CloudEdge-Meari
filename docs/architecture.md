@@ -46,12 +46,12 @@ derived from the camera's IoT model:
 
 | File | Core | IoT-driven |
 |------|------|------------|
-| `camera.py` | Live + idle MPEG-TS stream (`tcp://`), served to the browser by HA's built-in go2rtc (WebRTC) or HLS. | — |
+| `camera.py` | Live + idle MPEG-TS stream (`tcp://`), served to the browser by HA's built-in go2rtc (WebRTC) or HLS. Enabled for battery and mains-powered cameras. | — |
 | `binary_sensor.py` | Motion / Awake / Charging. | — |
 | `button.py` | Wake Camera. | — |
 | `sensor.py` | Battery + Charge Status. | Temperature, Humidity, WiFi Signal. |
 | `number.py` | Motion Timeout. | Sensitivities, intervals, brightness, volume… |
-| `select.py` | Stream Host Mode, Stream Quality. | Day/Night, SD record, anti-flicker… |
+| `select.py` | Stream Host Mode (Local Only / IP / Docker), Stream Quality. | Day/Night, SD record, anti-flicker… |
 | `switch.py` | Wake on Motion. | LED, PIR, ONVIF, HomeKit, sirens… |
 
 IoT entities are gated on `coordinator.supports_iot(feature)` or
@@ -88,13 +88,14 @@ setup, so they survive restarts.
 
 | File | What it does |
 |------|--------------|
-| `__init__.py` | Lifecycle, IoT cache, wake retry loop, video pipeline glue. |
-| `state.py` | Awake / battery / charge state machine, event fan-out. |
+| `__init__.py` | Lifecycle, IoT cache, wake retry loop, video pipeline glue. The cloud session loop backs off 2 s → 5 min between failed logins. |
+| `state.py` | Awake / battery / charge state machine, event fan-out, entity-facing setters, dashboard still (`get_latest_image`). |
 | `motion.py` | Translates raw MQTT alarms into HA binary-sensor pulses. |
 | `iot.py` | Capability parsing and feature checks, IoT value normalization/lookups. |
 | `mpegts.py` + `muxer.py` | ffmpeg-based MPEG-TS muxer (video copy, audio encode). |
 | `audio_encoder.py` | G.711 µ-law → AAC. |
-| `stream_server.py` + `stream_bootstrap.py` | TCP fan-out of MPEG-TS, PAT/PMT seed, idle-stream loop. |
+| `stream_server.py` + `stream_bootstrap.py` | TCP fan-out of MPEG-TS, PAT/PMT seed, idle-stream loop. Listens on loopback unless Stream Host Mode exposes it on the LAN. |
+| `backoff.py` | `RetryBackoff`, the exponential delay shared by the session loop and the motion-event poller. |
 
 ## P2P streamer
 

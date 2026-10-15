@@ -15,6 +15,11 @@ _LOGGER = logging.getLogger(__name__)
 
 CLIENT_QUEUE_CHUNKS = 4096
 CLIENT_SEND_TIMEOUT_S = 10.0
+# Loopback is enough for HA's own consumers (stream/HLS and its bundled
+# go2rtc); listening on every interface is only needed for LAN consumers
+# such as Frigate, and lets anyone on the network pull the decrypted video.
+LOCAL_BIND_HOST = "127.0.0.1"
+ANY_BIND_HOST = "0.0.0.0"
 
 
 @dataclass
@@ -28,7 +33,12 @@ class _Client:
 class StreamServer:
     """Local TCP server that fans the muxed MPEG-TS stream out to clients."""
 
-    def __init__(self, on_missing_bootstrap: Callable[[], bool] | None = None) -> None:
+    def __init__(
+        self,
+        on_missing_bootstrap: Callable[[], bool] | None = None,
+        bind_host: str = LOCAL_BIND_HOST,
+    ) -> None:
+        self._bind_host = bind_host
         self._sock: socket.socket | None = None
         self._port = 0
         self._running = False
@@ -42,6 +52,21 @@ class StreamServer:
     @property
     def port(self) -> int:
         return self._port
+
+    @property
+    def bind_host(self) -> str:
+        return self._bind_host
+
+    def set_bind_host(self, host: str) -> None:
+        """Listen on another interface; connected clients must reconnect."""
+        with self._lifecycle_lock:
+            if host == self._bind_host:
+                return
+            self._bind_host = host
+            listening = self._sock is not None
+        if listening:
+            self.stop()
+            self.start()
 
     @property
     def client_count(self) -> int:
@@ -68,7 +93,7 @@ class StreamServer:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             try:
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                sock.bind(("0.0.0.0", 0))
+                sock.bind((self._bind_host, 0))
                 sock.listen(8)
                 sock.settimeout(1.0)
             except OSError:

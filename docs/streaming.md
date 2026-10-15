@@ -191,6 +191,11 @@ stale client joins, and source-idle recovery, but not while video is current.
 - The local TCP listener is health-checked whenever HA requests a stream
   source. If its accept thread stopped unexpectedly, it is recreated and HA
   receives the new port instead of repeatedly opening a dead endpoint.
+- The listener binds to `127.0.0.1` by default (Stream Host Mode *Local
+  Only*): HA's `stream` worker and its bundled go2rtc both connect over
+  loopback. *IP Address* / *Docker Hostname* rebind it to `0.0.0.0` for LAN
+  consumers such as Frigate; switching modes rebinds immediately and the
+  camera entity picks up the new URL.
 - The coordinator (and so the listener) starts **before** the entity
   platforms. HA picks a camera's WebRTC provider (its built-in go2rtc) when
   the entity is added, and a camera without a `stream_source` at that

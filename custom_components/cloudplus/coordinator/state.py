@@ -10,6 +10,7 @@ from typing import Any, Callable
 from ..api import MeariApiClient
 from ..const import (
     DEFAULT_MOTION_TIMEOUT,
+    DEFAULT_STREAM_HOST_MODE,
     IOT_CODE_BATTERY_PERCENT,
     IOT_CODE_CHARGE_STATUS,
     IOT_CODE_LAMP,
@@ -24,8 +25,16 @@ from ..p2p_streamer import (
     supports_adaptive_stream,
 )
 from .iot import capability_value, iot_value, normalize_iot_values, supports_feature
+from .stream_server import ANY_BIND_HOST, LOCAL_BIND_HOST
 
 _LOGGER = logging.getLogger(__name__)
+
+SNAPSHOT_CARD_REQUEST_TTL = 30.0
+# Mains-powered cameras only stream on demand, so a dashboard still is
+# refreshed by briefly streaming when it is missing or stale.
+IPC_STILL_GRAB_S = 30.0
+IPC_STILL_MAX_AGE_S = 300.0
+IPC_STILL_RETRY_S = 60.0
 
 
 class CoordinatorStateMixin:
@@ -33,6 +42,7 @@ class CoordinatorStateMixin:
 
     _latest_image_source: str
     _latest_image_generation: int = 0
+    _last_ipc_still_request: float = float("-inf")
     _latest_image_updated_at: float
 
     @property
@@ -138,8 +148,14 @@ class CoordinatorStateMixin:
     def stream_host_mode(self) -> str:
         return self._stream_host_mode
 
+    @staticmethod
+    def stream_bind_host_for(mode: str) -> str:
+        return LOCAL_BIND_HOST if mode == DEFAULT_STREAM_HOST_MODE else ANY_BIND_HOST
+
     @property
     def stream_host(self) -> str:
+        if self._stream_host_mode == DEFAULT_STREAM_HOST_MODE:
+            return LOCAL_BIND_HOST
         if self._stream_host_mode == "docker":
             return socket.gethostname()
         try:
@@ -163,14 +179,43 @@ class CoordinatorStateMixin:
     def vvp_quality(self) -> int | None:
         return self._vvp_quality
 
+    def get_latest_image(self) -> bytes | None:
+        now = time.monotonic()
+        self._snapshot_requested_until = now + SNAPSHOT_CARD_REQUEST_TTL
+        if not self._is_snap and self._running:
+            retry_s = IPC_STILL_RETRY_S if self._latest_image is None else IPC_STILL_MAX_AGE_S
+            if now - self._last_ipc_still_request >= retry_s:
+                self._last_ipc_still_request = now
+                self._extend_live_deadline(IPC_STILL_GRAB_S)
+        return self._latest_image
+
     def set_vvp_quality(self, quality: int | None) -> None:
+        if quality == self._vvp_quality:
+            return
         self._vvp_quality = quality
+        self._codec_params.clear(self._video_codec)
+        self._stream_started_keyframe = False
+        self._reset_live_mux_timing()
+        self._stream_restart.set()
+        if self._is_snap:
+            self._idle_frame_ready.clear()
+            self._idle_frame_refresh.set()
+            self._idle_stream_reset.set()
+            with self._idle_frame_lock:
+                self._idle_video_frame = None
+                self._latest_video_kf = None
+            self._latest_image = None
+            self._latest_image_source = ""
+            self._latest_image_generation += 1
+            self._latest_image_updated_at = 0.0
         self._fire_update()
 
     def set_stream_host_mode(self, mode: str) -> None:
+        """Switch how the stream is exposed; rebinds the listener (blocking)."""
         if mode not in STREAM_HOST_MODES:
             return
         self._stream_host_mode = mode
+        self._stream_server.set_bind_host(self.stream_bind_host_for(mode))
         self._fire_update()
 
     def set_motion_wake_enabled(self, enabled: bool) -> None:

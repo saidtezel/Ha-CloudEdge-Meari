@@ -20,7 +20,9 @@ CONF_STREAM_QUALITY = "stream_quality"
 DEFAULT_MOTION_TIMEOUT = 120
 MOTION_TIMEOUT_MIN = 10
 MOTION_TIMEOUT_MAX = 600
-STREAM_HOST_MODES = ("ip", "docker")
+# "local" binds the stream to loopback (HA only); "ip"/"docker" expose it on the LAN.
+STREAM_HOST_MODES = ("local", "ip", "docker")
+DEFAULT_STREAM_HOST_MODE = "local"
 DEFAULT_COUNTRY_CODE = "FR"
 DEFAULT_PHONE_CODE = "33"
 DEFAULT_APP_PROFILE = "cloudedge"

@@ -148,7 +148,7 @@ discovered from the camera's IoT model values.
 | Wake Camera         | `button`        | Manually wake the camera. |
 | Wake on Motion      | `switch`        | Toggle auto-wake when a motion event fires. |
 | Motion Timeout      | `number`        | How long the camera stays awake after motion (10–600 s). |
-| Stream Host Mode    | `select`        | `IP Address` (default) or `Docker Hostname` for the stream URL — see [Streaming notes](#streaming-notes). |
+| Stream Host Mode    | `select`        | `Local Only` (default), `IP Address` or `Docker Hostname` — who can connect to the stream, see [Streaming notes](#streaming-notes). |
 | Stream Quality      | `select`        | `AUTO`, `SD`, `HD`, `QHD`, … — advertised profiles, or the native HD/SD fallback for legacy cameras. |
 
 ### IoT entities (model-dependent)
@@ -240,24 +240,37 @@ as-is and transcodes the AAC audio to Opus for the browser.
   the idle still frame; press *Wake Camera* (or let motion wake it) to go
   live. Still images on dashboards come from the cached snapshot and never
   wake the camera.
+- Mains-powered cameras stream on demand while someone watches. To keep
+  the dashboard still current they also stream for ~30 s when a dashboard
+  asks for an image and the cached one is missing or older than 5 minutes.
 
 ### Stream Host Mode
 
-The `Stream Host Mode` select entity controls how the public URL of the
-MPEG-TS server is advertised:
+The `Stream Host Mode` select entity controls who can connect to the
+MPEG-TS server and how its URL is advertised:
 
-- `IP Address` — uses the HA host's LAN IP (e.g. `tcp://192.168.1.10:36059`).
-  Best for HAOS / HA Container with host networking, or anything that
-  reaches HA directly by IP.
-- `Docker Hostname` — uses the container's hostname instead. Pick this if
-  Frigate / go2rtc runs in the **same Docker network** as HA and resolves
-  containers by name.
+- `Local Only` (default) — listens on `127.0.0.1` only
+  (`tcp://127.0.0.1:36059`). HA's live view (built-in go2rtc / WebRTC and
+  HLS) works; nothing else on your network can open the stream. The stream
+  carries decrypted video and has no authentication, so keep this unless
+  another machine or container needs it.
+- `IP Address` — listens on all interfaces and advertises the HA host's LAN
+  IP (e.g. `tcp://192.168.1.10:36059`). Pick this for Frigate or a
+  standalone go2rtc on another host or container that reaches HA by IP.
+- `Docker Hostname` — listens on all interfaces and advertises the
+  container's hostname instead. Pick this if Frigate / go2rtc runs in the
+  **same Docker network** as HA and resolves containers by name.
 
-Both modes work for HA's built-in go2rtc, which runs alongside HA. The
-choice is remembered across restarts, as are *Stream Quality*, *Wake on
-Motion* and *Motion Timeout*.
+If you pointed HA's own go2rtc at an external go2rtc server (`go2rtc: url:`
+in `configuration.yaml`) that does not share HA's network namespace, pick
+`IP Address` too. The choice is remembered across restarts, as are *Stream
+Quality*, *Wake on Motion* and *Motion Timeout*.
 
 ### Using the stream in Frigate / a standalone go2rtc
+
+First set *Stream Host Mode* to `IP Address` or `Docker Hostname`: the
+default `Local Only` mode refuses connections from other hosts and
+containers.
 
 The MPEG-TS server is internal to Home Assistant — it isn't a hardcoded
 RTSP URL you can paste into Frigate's config. You need to read the actual
@@ -345,8 +358,9 @@ Common issues:
 - **Camera never wakes** — deep-dormancy wakes are retried automatically
   for up to ~45 s; if it consistently fails, your account may not own the
   wake right (re-share from the app).
-- **Frigate loses the source** — flip *Stream Host Mode* between `IP
-  Address` and `Docker Hostname` depending on your network topology.
+- **Frigate can't connect / loses the source** — *Stream Host Mode*
+  defaults to `Local Only`; set it to `IP Address` or `Docker Hostname`
+  depending on your network topology.
 
 ---
 
