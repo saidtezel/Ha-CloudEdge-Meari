@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
-import socket
+import select
+import time
+from collections.abc import Callable
 from typing import Any
 
 from ..meari_signaling import MsgSvrClient
+
+# Trickled candidates stop once signaling is quiet this long.
+TRICKLE_QUIET_S = 0.5
+# How often the camera's ICE checks are serviced while waiting for them.
+TRICKLE_POLL_S = 0.02
 
 
 def parse_sdp_answer(sdp: str) -> tuple[str, str, list[dict[str, Any]]]:
@@ -100,21 +107,38 @@ def candidates_from_response(response: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def collect_trickle_candidates(
-    sig: MsgSvrClient, camera_candidates: list[dict[str, Any]]
+    sig: MsgSvrClient,
+    camera_candidates: list[dict[str, Any]],
+    idle: Callable[[], None] | None = None,
 ) -> None:
+    """Read trickled candidates until signaling has been quiet for 0.5 s.
+
+    ``idle`` runs while we wait: the camera starts its ICE checks as soon as
+    it answers, and they have to be answered during this window.
+    """
     old_timeout = sig.sock.gettimeout()
     try:
-        sig.sock.settimeout(0.5)
+        sig.sock.settimeout(TRICKLE_QUIET_S)
+        quiet_since = time.monotonic()
         for _ in range(10):
+            # Wait for a whole frame to start arriving before reading, so a
+            # short poll never cuts a frame in half.
+            while True:
+                if idle is not None:
+                    idle()
+                remaining = TRICKLE_QUIET_S - (time.monotonic() - quiet_since)
+                if remaining <= 0:
+                    return
+                poll_s = min(remaining, TRICKLE_POLL_S) if idle else remaining
+                if select.select([sig.sock], [], [], poll_s)[0]:
+                    break
             try:
                 extra = sig.recv_webrtc_content()
-            except socket.timeout:
-                break
             except (OSError, ValueError, KeyError):
                 break
-            if not isinstance(extra, dict):
-                continue
-            camera_candidates.extend(candidates_from_response(extra))
+            quiet_since = time.monotonic()
+            if isinstance(extra, dict):
+                camera_candidates.extend(candidates_from_response(extra))
     finally:
         sig.sock.settimeout(old_timeout)
 

@@ -165,6 +165,17 @@ summary's `direct_ice_in` (camera checks received directly) and
 `direct_ice_out_ok` (direct replies to our checks) show which direction
 works.
 
+The camera's checks must also be answered **at once**. The camera starts
+checking our host candidate the moment it answers the offer, which is before
+we have collected its trickle candidates (up to 0.5 s of signaling silence)
+or set up TURN permissions and channels (several round trips). A check left
+unanswered that long makes the camera write the direct pair off: it keeps
+re-sending the same transaction and streams over its relay, even though our
+own checks get direct replies. So the session answers direct checks while it
+waits for trickle candidates (`collect_trickle_candidates(idle=...)`), after
+each blocking signaling step, and inside every TURN request
+(`TurnClient.on_ice_request`) instead of dropping them.
+
 Legacy PPCS is direct by design. The engine obtains the camera's LAN/public
 endpoints from its device-provided PPCS roots, punches both, and keeps the
 confirmed endpoint for the session. Peer discovery gets the full dormancy-wake

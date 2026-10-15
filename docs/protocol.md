@@ -164,6 +164,13 @@ ordering, source-idle recovery, wake retries) see [streaming.md](streaming.md).
   Before startup KCP, the engine gives LAN/VPN host candidates a short direct
   ICE grace and sends initial KCP direct-only once direct STUN succeeds; this
   avoids racing QHD startup onto a relay path the native app would not use.
+- **Answer the camera's checks immediately, from the SDP answer on.** The
+  camera (`xts-ice-1.0.0`, ICE-controlled, `PRIORITY 0xffffff7e`) begins
+  checking our host candidate as soon as it answers. In a capture where those
+  checks went unanswered for ~0.6 s (trickle wait + TURN setup, whose STUN
+  reads used to discard them), the camera re-sent one transaction ID for the
+  rest of the session and streamed over its relay. Checks are now answered
+  during trickle collection and inside TURN requests.
 
 ## KCP / IVA
 

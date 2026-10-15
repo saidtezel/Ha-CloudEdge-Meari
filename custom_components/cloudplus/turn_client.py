@@ -21,6 +21,7 @@ import hmac
 import os
 import socket
 import struct
+from collections.abc import Callable
 
 # STUN message types
 BINDING_REQUEST = 0x0001
@@ -181,6 +182,10 @@ def _parse_stun(data):
     return {"type": msg_type, "txn_id": txn_id, "attrs": attrs}
 
 
+def _ignore_ice_request(_request: dict, _peer: tuple[str, int]) -> None:
+    """Default for TurnClient.on_ice_request: drop the check."""
+
+
 class TurnClient:
     """Minimal TURN relay client."""
 
@@ -200,6 +205,10 @@ class TurnClient:
         self._channel_counter = 0x4000
         self.channels = {}  # (ip, port) -> channel_number
         self.reverse_channels = {}  # channel_number -> (ip, port)
+        # Called with (parsed_request, (ip, port)) for a peer's ICE check that
+        # arrives while a TURN request waits for its reply, so the session can
+        # answer it. Ignored by default.
+        self.on_ice_request: Callable[[dict, tuple[str, int]], None] = _ignore_ice_request
 
     @property
     def _key(self):
@@ -238,10 +247,12 @@ class TurnClient:
         self._open_socket().sendto(data, (self.server_ip, self.server_port))
 
     def _recv(self, timeout=5.0):
+        return self._recv_from(timeout)[0]
+
+    def _recv_from(self, timeout=5.0):
         sock = self._open_socket()
         sock.settimeout(timeout)
-        data, _ = sock.recvfrom(65536)
-        return data
+        return sock.recvfrom(65536)
 
     def drain_socket(self):
         """Drain any buffered packets from the socket (non-blocking)."""
@@ -294,12 +305,15 @@ class TurnClient:
         # Try to receive matching response, skip unrelated packets
         for _attempt in range(50):  # Max 50 packets before giving up
             try:
-                resp_data = self._recv(timeout=3.0)
+                resp_data, addr = self._recv_from(timeout=3.0)
             except socket.timeout:
                 return None
             parsed = _parse_stun(resp_data)
             if parsed is None:
                 continue  # Not a valid STUN packet (e.g., ChannelData)
+            if parsed["type"] == BINDING_REQUEST and addr[0] != self.server_ip:
+                self.on_ice_request(parsed, addr)
+                continue
             if parsed["type"] in (expected_success, expected_error):
                 # Match by transaction ID to avoid consuming wrong responses
                 if parsed["txn_id"] == txn_id:

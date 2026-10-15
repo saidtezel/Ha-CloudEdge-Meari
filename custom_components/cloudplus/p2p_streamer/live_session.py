@@ -25,6 +25,7 @@ from ..kcp_tunnel import (
 from .network import (
     _build_ice_response,
     _get_local_ips,
+    answer_queued_ice_checks,
     _send_direct_ice_binding,
     recv_peer_packets,
 )
@@ -109,6 +110,40 @@ class LiveSessionMixin:
                     f"a=candidate:S{ip_hex} 1 UDP 1862270975 {turn.mapped_ip} {turn.mapped_port} typ srflx"
                 )
         offer_tag = str((sig.webrtcsvr or {}).get("tag") or "") + "01"
+        direct_ice_peer: list[tuple[str, int] | None] = [None]
+
+        def _note_direct_ice(peer: tuple[str, int], *, from_camera: bool) -> None:
+            # A request is the camera checking us (camera -> HA works); a
+            # response answers our check (HA -> camera works). Media goes
+            # direct only when the camera's own checks succeed.
+            key = "requests" if from_camera else "responses"
+            self.direct_ice_counts[key] += 1
+            if self.direct_ice_counts[key] == 1:
+                _LOGGER.debug(
+                    "Direct ICE %s %s",
+                    "check from camera at" if from_camera else "reply from",
+                    format_endpoint(peer),
+                )
+            direct_ice_peer[0] = peer
+
+        def _answer_direct_check(request: dict, peer: tuple[str, int]) -> None:
+            _note_direct_ice(peer, from_camera=True)
+            try:
+                turn.send_direct(
+                    peer[0], peer[1], _build_ice_response(request, ice_pwd, *peer)
+                )
+            except OSError:
+                pass
+
+        # The camera checks our host candidate the moment it answers the
+        # offer, and the official app replies within milliseconds. Left
+        # unanswered through trickle collection and TURN setup (~0.6 s), the
+        # camera writes the direct pair off and streams over its relay.
+        def _answer_queued_direct_checks() -> None:
+            answer_queued_ice_checks(turn, _answer_direct_check)
+
+        if not self._remote:
+            turn.on_ice_request = _answer_direct_check
         offer_sdp = "\n".join(sdp_lines) + "\n"
         if was_dormant:
             camera_ufrag, camera_pwd, camera_candidates = self._negotiate_dormant_offer(
@@ -119,7 +154,11 @@ class LiveSessionMixin:
             camera_ufrag, camera_pwd, camera_candidates = parse_sdp_answer(
                 answer.get("sdp", "")
             )
-            collect_trickle_candidates(sig, camera_candidates)
+            collect_trickle_candidates(
+                sig,
+                camera_candidates,
+                idle=None if self._remote else _answer_queued_direct_checks,
+            )
         self.awaiting_wake = False
         deduped_candidates: list[dict[str, Any]] = []
         for cand in camera_candidates:
@@ -127,6 +166,8 @@ class LiveSessionMixin:
         camera_candidates = deduped_candidates
 
         complete = sig.send_candidate_complete(device_uuid)
+        if not self._remote:
+            _answer_queued_direct_checks()
         if isinstance(complete, dict):
             if complete.get("sdp"):
                 complete_ufrag, complete_pwd, _ = parse_sdp_answer(complete["sdp"])
@@ -193,7 +234,6 @@ class LiveSessionMixin:
             pass
 
         confirmed_peer: list[tuple[str, int, bool] | None] = [None]
-        direct_ice_peer: list[tuple[str, int] | None] = [None]
         candidate_fanout_until = time.time() + 8.0
 
         def _send_udp(data: bytes) -> None:
@@ -524,20 +564,6 @@ class LiveSessionMixin:
                 _drain_kcp_queue()
                 _process_pending_payloads()
 
-        def _note_direct_ice(peer: tuple[str, int], *, from_camera: bool) -> None:
-            # A request is the camera checking us (camera -> HA works); a
-            # response answers our check (HA -> camera works). Media goes
-            # direct only when the camera's own checks succeed.
-            key = "requests" if from_camera else "responses"
-            self.direct_ice_counts[key] += 1
-            if self.direct_ice_counts[key] == 1:
-                _LOGGER.debug(
-                    "Direct ICE %s %s",
-                    "check from camera at" if from_camera else "reply from",
-                    format_endpoint(peer),
-                )
-            direct_ice_peer[0] = peer
-
         def _handle_peer_packet(packet) -> None:
             nonlocal candidate_fanout_until, last_udp_time, last_kcp_push_time
             last_udp_time = time.time()
@@ -555,15 +581,12 @@ class LiveSessionMixin:
                 msg_type = parsed.get("type")
                 if msg_type == BINDING_REQUEST and peer is not None:
                     if not packet.via_turn and not self._remote:
-                        _note_direct_ice(peer, from_camera=True)
+                        _answer_direct_check(parsed, peer)
+                        return
                     try:
-                        response = _build_ice_response(
-                            parsed, ice_pwd, peer[0], peer[1]
+                        turn.send_to_peer(
+                            peer[0], peer[1], _build_ice_response(parsed, ice_pwd, *peer)
                         )
-                        if not packet.via_turn and not self._remote:
-                            turn.send_direct(peer[0], peer[1], response)
-                        else:
-                            turn.send_to_peer(peer[0], peer[1], response)
                     except OSError:
                         pass
                     return
