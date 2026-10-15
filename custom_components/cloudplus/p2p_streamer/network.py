@@ -7,6 +7,7 @@ import os
 import socket
 import struct
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -15,6 +16,7 @@ from ..turn_client import (
     _decode_xor_address,
     _parse_stun,
     build_ice_binding_request,
+    BINDING_REQUEST,
     BINDING_RESPONSE,
     DATA_INDICATION,
     ATTR_DATA,
@@ -273,6 +275,38 @@ def _send_direct_ice_binding(
         remote_pwd=remote_pwd,
     )
     sock.sendto(msg, (peer_ip, peer_port))
+
+
+def answer_queued_ice_checks(
+    turn, answer: Callable[[dict, tuple[str, int]], None], max_packets: int = 64
+) -> None:
+    """Answer the peer ICE checks already queued on the TURN socket.
+
+    Each packet is peeked first and only checks are consumed, so anything
+    else stays queued for the stream loop.
+    """
+    try:
+        sock = turn.open_socket()
+    except OSError:
+        return
+    sock.setblocking(False)
+    try:
+        for _ in range(max_packets):
+            try:
+                raw, addr = sock.recvfrom(65536, socket.MSG_PEEK)
+            except OSError:
+                break
+            parsed = _parse_stun(raw)
+            if (
+                not parsed
+                or parsed["type"] != BINDING_REQUEST
+                or addr[0] == getattr(turn, "server_ip", None)
+            ):
+                break
+            sock.recvfrom(65536)
+            answer(parsed, addr)
+    finally:
+        sock.setblocking(True)
 
 
 def _unwrap_peer_packet(turn, raw: bytes, addr: tuple[str, int]) -> PeerPacket:
