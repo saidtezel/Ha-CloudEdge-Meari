@@ -156,6 +156,12 @@ rapid ICE checks going while seeking a direct peer, stops candidate fanout once
 direct KCP is confirmed, and gives confirmed direct sessions a longer
 source-idle window before reconnecting.
 
+Direct media needs a host candidate the camera can reach. The offer lists
+the default-route LAN address first (`network._get_local_ips`): the hostname
+alone can resolve to a container network (on Home Assistant OS, the
+Supervisor's `172.30.32.x`), which leaves the camera no direct route and the
+session on TURN even though our STUN checks to the camera succeed.
+
 Legacy PPCS is direct by design. The engine obtains the camera's LAN/public
 endpoints from its device-provided PPCS roots, punches both, and keeps the
 confirmed endpoint for the session. Peer discovery gets the full dormancy-wake

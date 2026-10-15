@@ -537,7 +537,7 @@ class P2PStreamer(LiveSessionMixin):
             "P2P session done: video_frames=%d source_frames=%d "
             "video_bytes=%d audio_frames=%d audio_bytes=%d codec=%s "
             "stream_id=%s candidates=%d signaling=%s turn=%s "
-            "transport=%s peer=%s",
+            "transport=%s peer=%s path=%s",
             self._video_count,
             self._source_video_count,
             self._total_bytes,
@@ -550,6 +550,8 @@ class P2PStreamer(LiveSessionMixin):
             format_endpoint(self._last_turn_endpoint),
             "ppcs" if self._uses_ppcs else "webrtc",
             format_endpoint(self._last_peer_endpoint),
+            "direct" if self.direct_confirmed
+            else "turn" if self._last_peer_endpoint else "none",
         )
 
     def _run_ppcs_session(

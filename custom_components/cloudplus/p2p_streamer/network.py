@@ -62,8 +62,28 @@ def _is_private_ip(ip: str) -> bool:
     return False
 
 
+def _route_ip() -> str | None:
+    """Address of the interface that carries the default route (sends nothing)."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+    except OSError:
+        return None
+    return None if ip.startswith("127.") or ip == "0.0.0.0" else ip
+
+
 def _get_local_ips() -> list[str]:
+    """Local IPv4 addresses offered to the camera as host candidates.
+
+    The default-route address comes first. The hostname alone is not enough:
+    inside Home Assistant OS it resolves to the Supervisor network
+    (172.30.32.x), which the camera cannot reach, so the camera never sends
+    media directly and the session stays on the TURN relay.
+    """
     ips: list[str] = []
+    if route_ip := _route_ip():
+        ips.append(route_ip)
     try:
         for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
             ip = info[4][0]
@@ -71,15 +91,7 @@ def _get_local_ips() -> list[str]:
                 ips.append(ip)
     except OSError:
         pass
-    if not ips:
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            ips.append(s.getsockname()[0])
-            s.close()
-        except OSError:
-            ips.append("0.0.0.0")
-    return ips
+    return ips or ["0.0.0.0"]
 
 
 # ---------------------------------------------------------------------------

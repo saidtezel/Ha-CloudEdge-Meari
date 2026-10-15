@@ -23,6 +23,7 @@ CONST = MODULES["const"]
 BACKOFF = importlib.import_module("custom_components.cloudplus.coordinator.backoff")
 MOTION = importlib.import_module("custom_components.cloudplus.coordinator.motion")
 STREAM_SERVER = importlib.import_module("custom_components.cloudplus.coordinator.stream_server")
+NETWORK = importlib.import_module("custom_components.cloudplus.p2p_streamer.network")
 
 
 def make_camera(port: int = 40000, host: str = "192.0.2.10") -> Any:
@@ -319,6 +320,39 @@ class StreamProtocolTests(unittest.TestCase):
         sock = self.connect()
         sock.sendall(b"HEAD / HTTP/1.1\r\nHost: x\r\n\r\n")
         self.assertEqual(self.read(sock, 4096), STREAM_SERVER.HTTP_RESPONSE)
+
+
+class HostCandidateTests(unittest.TestCase):
+    """The camera must be offered an address it can reach for direct media."""
+
+    def local_ips(self, route_ip, hostname_ips):
+        def getaddrinfo(*_args, **_kwargs):
+            return [(2, 2, 17, "", (ip, 0)) for ip in hostname_ips]
+
+        with patch.object(NETWORK, "_route_ip", return_value=route_ip), \
+                patch.object(NETWORK.socket, "getaddrinfo", getaddrinfo):
+            return NETWORK._get_local_ips()
+
+    def test_haos_hostname_resolves_to_supervisor_network(self):
+        # Inside HA OS "homeassistant" resolves to the Supervisor bridge only.
+        self.assertEqual(
+            self.local_ips("10.10.10.5", ["172.30.32.1"]), ["10.10.10.5", "172.30.32.1"]
+        )
+
+    def test_route_ip_first_and_not_duplicated(self):
+        self.assertEqual(self.local_ips("192.168.1.20", ["192.168.1.20"]), ["192.168.1.20"])
+
+    def test_no_default_route_falls_back_to_hostname(self):
+        self.assertEqual(self.local_ips(None, ["192.168.1.20", "127.0.1.1"]), ["192.168.1.20"])
+        self.assertEqual(self.local_ips(None, []), ["0.0.0.0"])
+
+    def test_route_ip_ignores_loopback(self):
+        sock = Mock()
+        sock.__enter__ = Mock(return_value=sock)
+        sock.__exit__ = Mock(return_value=False)
+        sock.getsockname.return_value = ("127.0.0.1", 5555)
+        with patch.object(NETWORK.socket, "socket", return_value=sock):
+            self.assertIsNone(NETWORK._route_ip())
 
 
 if __name__ == "__main__":
