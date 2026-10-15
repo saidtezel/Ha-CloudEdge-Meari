@@ -154,6 +154,8 @@ class P2PStreamer(LiveSessionMixin):
         # restart watchdogs stay patient through brief mid-stream silences
         # instead of abandoning it for the lossy relay.
         self.direct_confirmed = False
+        # Direct (non-relay) ICE checks seen this session, by direction.
+        self.direct_ice_counts = {"requests": 0, "responses": 0}
 
     def request_stop(self) -> None:
         self._running = False
@@ -402,6 +404,7 @@ class P2PStreamer(LiveSessionMixin):
                 self._last_peer_endpoint = None
                 self._last_candidate_count = 0
                 self.direct_confirmed = False
+                self.direct_ice_counts = {"requests": 0, "responses": 0}
                 result = self._run_session_once(
                     host_key,
                     allow_auth_fallback=uses_video_password,
@@ -537,7 +540,7 @@ class P2PStreamer(LiveSessionMixin):
             "P2P session done: video_frames=%d source_frames=%d "
             "video_bytes=%d audio_frames=%d audio_bytes=%d codec=%s "
             "stream_id=%s candidates=%d signaling=%s turn=%s "
-            "transport=%s peer=%s path=%s",
+            "transport=%s peer=%s path=%s direct_ice_in=%d direct_ice_out_ok=%d",
             self._video_count,
             self._source_video_count,
             self._total_bytes,
@@ -552,6 +555,8 @@ class P2PStreamer(LiveSessionMixin):
             format_endpoint(self._last_peer_endpoint),
             "direct" if self.direct_confirmed
             else "turn" if self._last_peer_endpoint else "none",
+            self.direct_ice_counts["requests"],
+            self.direct_ice_counts["responses"],
         )
 
     def _run_ppcs_session(

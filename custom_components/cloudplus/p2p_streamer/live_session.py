@@ -524,9 +524,18 @@ class LiveSessionMixin:
                 _drain_kcp_queue()
                 _process_pending_payloads()
 
-        def _note_direct_ice(peer: tuple[str, int]) -> None:
-            if direct_ice_peer[0] is None:
-                _LOGGER.debug("Direct ICE reply from %s", format_endpoint(peer))
+        def _note_direct_ice(peer: tuple[str, int], *, from_camera: bool) -> None:
+            # A request is the camera checking us (camera -> HA works); a
+            # response answers our check (HA -> camera works). Media goes
+            # direct only when the camera's own checks succeed.
+            key = "requests" if from_camera else "responses"
+            self.direct_ice_counts[key] += 1
+            if self.direct_ice_counts[key] == 1:
+                _LOGGER.debug(
+                    "Direct ICE %s %s",
+                    "check from camera at" if from_camera else "reply from",
+                    format_endpoint(peer),
+                )
             direct_ice_peer[0] = peer
 
         def _handle_peer_packet(packet) -> None:
@@ -546,7 +555,7 @@ class LiveSessionMixin:
                 msg_type = parsed.get("type")
                 if msg_type == BINDING_REQUEST and peer is not None:
                     if not packet.via_turn and not self._remote:
-                        _note_direct_ice(peer)
+                        _note_direct_ice(peer, from_camera=True)
                     try:
                         response = _build_ice_response(
                             parsed, ice_pwd, peer[0], peer[1]
@@ -560,7 +569,7 @@ class LiveSessionMixin:
                     return
                 if msg_type == BINDING_RESPONSE:
                     if peer is not None and not packet.via_turn and not self._remote:
-                        _note_direct_ice(peer)
+                        _note_direct_ice(peer, from_camera=False)
                     kcp.retransmit_unacked()
                     return
 

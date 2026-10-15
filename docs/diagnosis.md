@@ -51,18 +51,18 @@ grep for the engine-level signals:
 
 ```bash
 python debug.py --debug stream … 2>&1 | grep -E \
-  'Video stalled|skipped gaps|source-idle|session done|Confirmed media peer|PPCS direct|Offering host candidates|Direct ICE reply'
+  'Video stalled|skipped gaps|source-idle|session done|Confirmed media peer|PPCS direct|Offering host candidates|Direct ICE'
 ```
 
 ## Reading engine signals
 
 | Log line | What it tells you |
 |----------|-------------------|
-| `P2P session done: video_frames=N source_frames=M ... transport=T peer=P path=direct\|turn\|none` | `path` is the media path the session ended on. `source_frames` is what actually arrived from the camera. Modern sessions normally populate signaling/TURN/candidates. PPCS sessions intentionally leave signaling/TURN empty and identify their direct media endpoint in `peer`. If every applicable path field is empty, zero frames say nothing about the parser or camera source. |
+| `P2P session done: video_frames=N source_frames=M ... transport=T peer=P path=direct\|turn\|none direct_ice_in=N direct_ice_out_ok=N` | `path` is the media path the session ended on. `source_frames` is what actually arrived from the camera. Modern sessions normally populate signaling/TURN/candidates. PPCS sessions intentionally leave signaling/TURN empty and identify their direct media endpoint in `peer`. If every applicable path field is empty, zero frames say nothing about the parser or camera source. |
 | `Video stalled Xs without KCP gap: udp_idle=…` | When `udp_idle` grows in lockstep, the camera is silent (re-prompt territory) rather than us losing packets. |
 | `Confirmed media peer … via direct\|turn` | Tells you whether media is flowing on the LAN directly or through the TURN relay. On the camera's LAN, expect `direct` — signaling/TURN servers are then not in the media path. |
-| `Offering host candidates A, B` (debug) | The addresses the camera may send direct media to; the default-route LAN address comes first. If only an internal address (e.g. HA OS's `172.30.32.x`) shows, the camera cannot go direct. |
-| `Direct ICE reply from …` (debug) | The camera answered our connectivity checks directly. Seen with `via turn` media, the camera can be reached but cannot reach us: check the offered candidates and camera → HA firewall rules. |
+| `Offering host candidates A, B` (debug) | The addresses the camera may send direct media to; the default-route LAN address comes first. If none is reachable from the camera's network, it cannot go direct. |
+| `Direct ICE reply from …` / `Direct ICE check from camera at …` (debug) | First direct (non-relay) reply to our checks (HA → camera works) / first direct check from the camera (camera → HA works). The summary's `direct_ice_out_ok` / `direct_ice_in` count them. Replies without camera checks, plus `via turn` media, mean the camera's packets to HA are not arriving. |
 | `PPCS direct peer confirmed: IP:PORT` | A `deviceP2P=ppcs` camera completed legacy root rendezvous and UDP punching. Its media uses PPCS reliable channels, so KCP/TURN diagnostics do not apply. |
 | `Retrying signaling discovery without client UUID` | UUID-aware roots either selected a cluster that does not know the camera or could not connect. The engine is retrying the official generic root-query and MsgSvr-registration shape; the same endpoint may be retried because its registration identity is now different. |
 | `Dormant coturn unavailable; waking before relay negotiation` | This camera withholds TURN credentials while dormant. The engine is waking on the current MsgSvr session, waiting briefly for its `online` push, and retrying coturn without changing clusters. |
