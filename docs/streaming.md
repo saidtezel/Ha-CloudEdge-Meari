@@ -191,6 +191,12 @@ stale client joins, and source-idle recovery, but not while video is current.
 - The local TCP listener is health-checked whenever HA requests a stream
   source. If its accept thread stopped unexpectedly, it is recreated and HA
   receives the new port instead of repeatedly opening a dead endpoint.
+- The coordinator (and so the listener) starts **before** the entity
+  platforms. HA picks a camera's WebRTC provider (its built-in go2rtc) when
+  the entity is added, and a camera without a `stream_source` at that
+  moment is left on HLS only. When the URL later changes (listener restart,
+  Stream Host Mode), the camera entity re-points its HLS worker and asks HA
+  to re-pick the provider.
 - New clients need **PAT/PMT plus a current keyframe seed** before live
   packets.
 - Idle streams reuse the latest keyframe/still with the same advertised

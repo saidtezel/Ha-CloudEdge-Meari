@@ -12,10 +12,15 @@ CONF_SN_NUM = "sn_num"
 CONF_DEVICE_NAME = "device_name"
 CONF_HOST_KEY = "host_key"
 CONF_MOTION_TIMEOUT = "motion_timeout"
+CONF_MOTION_WAKE = "motion_wake"
+CONF_STREAM_HOST_MODE = "stream_host_mode"
 CONF_VIDEO_PASSWORD = "video_password"
 CONF_STREAM_QUALITY = "stream_quality"
 
 DEFAULT_MOTION_TIMEOUT = 120
+MOTION_TIMEOUT_MIN = 10
+MOTION_TIMEOUT_MAX = 600
+STREAM_HOST_MODES = ("ip", "docker")
 DEFAULT_COUNTRY_CODE = "FR"
 DEFAULT_PHONE_CODE = "33"
 DEFAULT_APP_PROFILE = "cloudedge"

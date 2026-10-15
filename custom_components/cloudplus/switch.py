@@ -12,7 +12,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
+from .const import CONF_MOTION_WAKE, DOMAIN
 from .coordinator import CloudEdgeMeariCoordinator
 from .entity import CloudEdgeMeariEntity, CloudEdgeMeariIotEntity
 from .meari_commands import (
@@ -249,11 +249,13 @@ class CloudEdgeMeariMotionWakeSwitch(CloudEdgeMeariEntity, SwitchEntity):
     async def async_turn_on(self, **_kwargs: Any) -> None:
         """Enable wake on motion."""
         self._coordinator.set_motion_wake_enabled(True)
+        self._save_option(CONF_MOTION_WAKE, True)
         self.async_write_ha_state()
 
     async def async_turn_off(self, **_kwargs: Any) -> None:
         """Disable wake on motion."""
         self._coordinator.set_motion_wake_enabled(False)
+        self._save_option(CONF_MOTION_WAKE, False)
         self.async_write_ha_state()
 
 

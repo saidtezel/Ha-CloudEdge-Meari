@@ -11,6 +11,7 @@ from homeassistant.config_entries import (
     SOURCE_IMPORT,
 )
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
@@ -241,6 +242,22 @@ async def _disable_account_camera_entries(
 # ---------------------------------------------------------------------------
 
 
+async def _async_login(
+    hass: HomeAssistant, api: MeariApiClient, entry: ConfigEntry
+) -> bool:
+    """Log in, letting HA retry setup while the Meari cloud is unreachable."""
+    try:
+        await hass.async_add_executor_job(api.login)
+    except PermissionError as err:
+        # Wrong credentials won't fix themselves; retrying would only hammer
+        # the login endpoint. Fix them via the account entry's Configure.
+        _LOGGER.error("Login rejected for %s: %s", entry.title, err)
+        return False
+    except (OSError, ValueError, KeyError, RuntimeError) as err:
+        raise ConfigEntryNotReady(f"Login failed for {entry.title}: {err}") from err
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up CloudEdge / Meari from a config entry."""
     hass.data.setdefault(DOMAIN, {})
@@ -256,16 +273,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         app_profile = entry.data.get(CONF_APP_PROFILE, DEFAULT_APP_PROFILE)
 
         api = build_api_client(email, password, country_code, phone_code, app_profile)
-        try:
-            await hass.async_add_executor_job(api.login)
-        except (OSError, ValueError, KeyError, RuntimeError):
-            _LOGGER.exception("Account entry %s failed to login", entry.title)
+        if not await _async_login(hass, api, entry):
             return False
 
         hass.data[DOMAIN][entry.entry_id] = {"type": "account"}
         await _restore_account_managed_camera_entries(hass, entry)
         # Discover cameras and create their entries if missing.
-        await _ensure_camera_entries(hass, entry, api)
+        try:
+            await _ensure_camera_entries(hass, entry, api)
+        except (OSError, ValueError, KeyError, RuntimeError) as err:
+            raise ConfigEntryNotReady(f"Could not list cameras: {err}") from err
         return True
 
     # ------------------------------------------------------------------
@@ -326,7 +343,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     video_password = str(entry.options.get(CONF_VIDEO_PASSWORD) or "").strip()
 
     api = build_api_client(email, password, country_code, phone_code, app_profile)
-    await hass.async_add_executor_job(api.login)
+    if not await _async_login(hass, api, entry):
+        return False
 
     coord = CloudEdgeMeariCoordinator(
         hass,
@@ -345,8 +363,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data[DOMAIN][entry.entry_id] = coord
 
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    # Start before the platforms so the camera entity has a stream_source when
+    # it is added: that is when HA picks its WebRTC provider (go2rtc).
     await coord.async_start()
+    try:
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    except Exception:
+        await coord.async_stop()
+        hass.data[DOMAIN].pop(entry.entry_id, None)
+        raise
 
     # Register the PTZ service once per integration.
     if not hass.services.has_service(DOMAIN, SERVICE_PTZ):

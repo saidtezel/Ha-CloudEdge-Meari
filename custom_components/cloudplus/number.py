@@ -10,7 +10,12 @@ from homeassistant.const import PERCENTAGE, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
+from .const import (
+    CONF_MOTION_TIMEOUT,
+    DOMAIN,
+    MOTION_TIMEOUT_MAX,
+    MOTION_TIMEOUT_MIN,
+)
 from .coordinator import CloudEdgeMeariCoordinator
 from .entity import CloudEdgeMeariEntity, CloudEdgeMeariIotNumericEntity
 from .meari_commands import (
@@ -188,8 +193,8 @@ class CloudEdgeMeariMotionTimeout(CloudEdgeMeariEntity, NumberEntity):
 
     _attr_name = "Motion Timeout"
     _attr_icon = "mdi:timer-outline"
-    _attr_native_min_value = 10
-    _attr_native_max_value = 600
+    _attr_native_min_value = MOTION_TIMEOUT_MIN
+    _attr_native_max_value = MOTION_TIMEOUT_MAX
     _attr_native_step = 10
     _attr_native_unit_of_measurement = UnitOfTime.SECONDS
     _attr_mode = NumberMode.SLIDER
@@ -207,4 +212,5 @@ class CloudEdgeMeariMotionTimeout(CloudEdgeMeariEntity, NumberEntity):
     async def async_set_native_value(self, value: float) -> None:
         """Update the motion timeout."""
         self._coordinator.set_motion_timeout(int(value))
+        self._save_option(CONF_MOTION_TIMEOUT, self._coordinator.motion_timeout)
         self.async_write_ha_state()

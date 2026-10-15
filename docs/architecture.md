@@ -32,7 +32,7 @@ root if present.
 
 | File | Responsibility |
 |------|----------------|
-| `__init__.py` | `async_setup_entry` / `async_unload_entry`, account-vs-camera entry split, V1→V2 migration, PTZ service registration. |
+| `__init__.py` | `async_setup_entry` / `async_unload_entry`, account-vs-camera entry split, V1→V2 migration, PTZ service registration. Starts the coordinator before the platforms (go2rtc needs a `stream_source` when the camera is added); cloud errors at setup raise `ConfigEntryNotReady`. |
 | `config_flow.py` | User-facing config + options flows. One account entry, N child camera entries created via `SOURCE_IMPORT`. |
 | `const.py` | All config keys, defaults, app-profile list, alarm-type table, IoT codes. |
 | `api.py` | Meari HTTP client — login, device list, IoT model fetch, wake, OpenAPI bridge. |
@@ -46,7 +46,7 @@ derived from the camera's IoT model:
 
 | File | Core | IoT-driven |
 |------|------|------------|
-| `camera.py` | Live + idle MPEG-TS stream. | — |
+| `camera.py` | Live + idle MPEG-TS stream (`tcp://`), served to the browser by HA's built-in go2rtc (WebRTC) or HLS. | — |
 | `binary_sensor.py` | Motion / Awake / Charging. | — |
 | `button.py` | Wake Camera. | — |
 | `sensor.py` | Battery + Charge Status. | Temperature, Humidity, WiFi Signal. |
@@ -75,6 +75,11 @@ invalid, or the SDK's `-1` default).
 
 Each select uses the same per-camera option map for display and writes;
 unsupported choices and out-of-range number writes are rejected locally.
+
+Integration-side settings (Stream Quality, Stream Host Mode, Wake on Motion,
+Motion Timeout) are saved in the camera entry's `options` via
+`CloudEdgeMeariEntity._save_option` and read back by the coordinator on
+setup, so they survive restarts.
 
 ## Coordinator
 

@@ -9,7 +9,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CONF_STREAM_QUALITY, DOMAIN
+from .const import CONF_STREAM_HOST_MODE, CONF_STREAM_QUALITY, DOMAIN
 from .coordinator import CloudEdgeMeariCoordinator
 from .entity import CloudEdgeMeariEntity, CloudEdgeMeariIotEntity
 from .meari_commands import (
@@ -233,6 +233,7 @@ class CloudEdgeMeariStreamHostSelect(CloudEdgeMeariEntity, SelectEntity):
         key = _OPTION_TO_KEY.get(option)
         if key:
             self._coordinator.set_stream_host_mode(key)
+            self._save_option(CONF_STREAM_HOST_MODE, key)
         self.async_write_ha_state()
 
 
@@ -280,7 +281,7 @@ class CloudEdgeMeariStreamQualitySelect(CloudEdgeMeariEntity, SelectEntity):
             return
         quality_id = self._label_to_id.get(option)
         self._coordinator.set_vvp_quality(quality_id)
-        options = dict(self._entry.options)
-        options[CONF_STREAM_QUALITY] = _AUTO_LABEL if quality_id is None else quality_id
-        self.hass.config_entries.async_update_entry(self._entry, options=options)
+        self._save_option(
+            CONF_STREAM_QUALITY, _AUTO_LABEL if quality_id is None else quality_id
+        )
         self.async_write_ha_state()

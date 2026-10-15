@@ -9,11 +9,15 @@ from typing import Any, Callable
 
 from ..api import MeariApiClient
 from ..const import (
+    DEFAULT_MOTION_TIMEOUT,
     IOT_CODE_BATTERY_PERCENT,
     IOT_CODE_CHARGE_STATUS,
     IOT_CODE_LAMP,
     IOT_CODE_VIDEO_ENCRYPTION,
+    MOTION_TIMEOUT_MAX,
+    MOTION_TIMEOUT_MIN,
     PTZ_DIRECTIONS,
+    STREAM_HOST_MODES,
 )
 from ..p2p_streamer import (
     quality_profile_labels,
@@ -164,7 +168,7 @@ class CoordinatorStateMixin:
         self._fire_update()
 
     def set_stream_host_mode(self, mode: str) -> None:
-        if mode not in {"ip", "docker"}:
+        if mode not in STREAM_HOST_MODES:
             return
         self._stream_host_mode = mode
         self._fire_update()
@@ -177,8 +181,16 @@ class CoordinatorStateMixin:
             self._set_camera_awake(True)
         self._fire_update()
 
+    @staticmethod
+    def clamp_motion_timeout(seconds: Any) -> int:
+        try:
+            value = int(seconds)
+        except (TypeError, ValueError):
+            value = DEFAULT_MOTION_TIMEOUT
+        return max(MOTION_TIMEOUT_MIN, min(MOTION_TIMEOUT_MAX, value))
+
     def set_motion_timeout(self, seconds: int) -> None:
-        self._motion_timeout = max(10, min(600, int(seconds)))
+        self._motion_timeout = self.clamp_motion_timeout(seconds)
         if self._camera_awake:
             self._extend_live_deadline()
         self._fire_update()

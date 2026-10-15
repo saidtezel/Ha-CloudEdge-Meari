@@ -13,12 +13,16 @@ from homeassistant.core import HomeAssistant
 
 from ..api import MeariApiClient
 from ..const import (
+    CONF_MOTION_TIMEOUT,
+    CONF_MOTION_WAKE,
+    CONF_STREAM_HOST_MODE,
     CONF_STREAM_QUALITY,
     DEFAULT_APP_PROFILE,
     DEFAULT_COUNTRY_CODE,
     DEFAULT_MOTION_TIMEOUT,
     DEFAULT_PHONE_CODE,
     DOMAIN,
+    STREAM_HOST_MODES,
 )
 from ..p2p_streamer import (
     ADAPTIVE_STREAM_ID,
@@ -127,9 +131,13 @@ class CloudEdgeMeariCoordinator(CoordinatorStateMixin):
         self._motion_type = ""
         self._motion_detected = False
         self._last_motion_time = 0.0
-        self._motion_wake_enabled = True
-        self._motion_timeout = DEFAULT_MOTION_TIMEOUT
-        self._stream_host_mode = "ip"
+        options = entry.options if entry else {}  # settings persisted by entities
+        self._motion_wake_enabled = bool(options.get(CONF_MOTION_WAKE, True))
+        self._motion_timeout = self.clamp_motion_timeout(
+            options.get(CONF_MOTION_TIMEOUT, DEFAULT_MOTION_TIMEOUT)
+        )
+        host_mode = options.get(CONF_STREAM_HOST_MODE)
+        self._stream_host_mode = host_mode if host_mode in STREAM_HOST_MODES else "ip"
         self._initial_frame_grab = bool(initial_frame_grab)
         self._initial_grab_timeout = max(30.0, float(initial_grab_timeout))
 
@@ -184,7 +192,7 @@ class CloudEdgeMeariCoordinator(CoordinatorStateMixin):
         self._stream_idr_seed_generation = 0
         self._startup_safe_min_seed_generation = 0
 
-        quality_setting = entry.options.get(CONF_STREAM_QUALITY) if entry else None
+        quality_setting = options.get(CONF_STREAM_QUALITY)
         self._vvp_quality: int | None = parse_quality_setting(device, quality_setting)
         self._codec_params = CodecParameterCache()
         self._stream_started_keyframe = False

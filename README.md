@@ -139,7 +139,7 @@ discovered from the camera's IoT model values.
 
 | Entity              | Platform        | Purpose |
 |---------------------|-----------------|---------|
-| Camera              | `camera`        | Live preview + `stream_source` for go2rtc / Frigate. |
+| Camera              | `camera`        | Live view (WebRTC via HA's built-in go2rtc, or HLS) + `stream_source` for Frigate. |
 | Motion              | `binary_sensor` | PIR / motion / AI alert (person, pet, package, etc.). |
 | Camera Awake        | `binary_sensor` | True while the camera is actively streaming. |
 | Charging            | `binary_sensor` | USB charging state (battery cameras). |
@@ -222,6 +222,25 @@ rather than `snap`, even though their capability map advertises `bat`. The
 coordinator treats those battery-capable doorbell categories as battery
 cameras so they use the same wake/idle-stream lifecycle.
 
+### Live view in Home Assistant (built-in go2rtc / WebRTC)
+
+Home Assistant 2024.11+ ships go2rtc and uses it for low-latency WebRTC
+live view (it is part of `default_config`). The camera entity works with it
+out of the box — no add-on, YAML or extra integration needed: HA hands the
+camera's `tcp://` MPEG-TS source to its go2rtc, which serves the video
+as-is and transcodes the AAC audio to Opus for the browser.
+
+- **H.264** (typically `SD`) plays over WebRTC in every browser.
+- **HEVC / H.265** (typically `HD`, `QHD`, `AUTO`) only plays over WebRTC
+  where the browser supports H.265 WebRTC (recent Safari / Chrome on
+  supported hardware). Elsewhere HA's frontend falls back to HLS, which has
+  the same HEVC limits plus a few seconds of latency. Pick `SD` under
+  *Stream Quality* if you want WebRTC everywhere.
+- Battery cameras keep their usual behaviour: opening the live view shows
+  the idle still frame; press *Wake Camera* (or let motion wake it) to go
+  live. Still images on dashboards come from the cached snapshot and never
+  wake the camera.
+
 ### Stream Host Mode
 
 The `Stream Host Mode` select entity controls how the public URL of the
@@ -234,7 +253,11 @@ MPEG-TS server is advertised:
   Frigate / go2rtc runs in the **same Docker network** as HA and resolves
   containers by name.
 
-### Using the stream in Frigate / go2rtc
+Both modes work for HA's built-in go2rtc, which runs alongside HA. The
+choice is remembered across restarts, as are *Stream Quality*, *Wake on
+Motion* and *Motion Timeout*.
+
+### Using the stream in Frigate / a standalone go2rtc
 
 The MPEG-TS server is internal to Home Assistant — it isn't a hardcoded
 RTSP URL you can paste into Frigate's config. You need to read the actual

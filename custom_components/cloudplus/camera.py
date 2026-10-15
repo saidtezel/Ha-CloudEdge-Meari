@@ -7,7 +7,7 @@ from typing import Any
 
 from homeassistant.components.camera import Camera, CameraEntityFeature
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
@@ -28,7 +28,12 @@ async def async_setup_entry(
 
 
 class CloudEdgeMeariCamera(CloudEdgeMeariEntity, Camera):
-    """Representation of a CloudEdge / Meari camera."""
+    """Representation of a CloudEdge / Meari camera.
+
+    The MPEG-TS URL from ``stream_source`` is all HA needs: its built-in
+    go2rtc integration accepts ``tcp://`` sources and serves them over WebRTC,
+    with HLS from the ``stream`` component as the fallback.
+    """
 
     _attr_name = "Camera"
     _attr_supported_features = CameraEntityFeature.STREAM
@@ -40,6 +45,7 @@ class CloudEdgeMeariCamera(CloudEdgeMeariEntity, Camera):
         super().__init__(coordinator, entry)
         self._attr_entity_registry_enabled_default = coordinator.is_battery_camera
         self._attr_unique_id = f"{coordinator.device_uuid}_camera"
+        self._last_stream_source: str | None = None
 
     @property
     def is_streaming(self) -> bool:
@@ -48,13 +54,43 @@ class CloudEdgeMeariCamera(CloudEdgeMeariEntity, Camera):
             return True
         return self._coordinator.camera_awake
 
-    async def stream_source(self) -> str | None:
-        """Return MPEG-TS stream URL for HA stream / Frigate."""
+    def _current_stream_source(self) -> str | None:
         port = self._coordinator.stream_port
         if not port:
             return None
         host = self._coordinator.stream_host
         return f"tcp://{host}:{port}"
+
+    async def stream_source(self) -> str | None:
+        """Return MPEG-TS stream URL for HA stream, go2rtc and Frigate."""
+        return self._current_stream_source()
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self._last_stream_source = self._current_stream_source()
+
+    @callback
+    def _handle_update(self) -> None:
+        source = self._current_stream_source()
+        # None only while the coordinator is stopping; nothing to re-point then.
+        if source and source != self._last_stream_source:
+            self._last_stream_source = source
+            self.hass.async_create_task(self._async_stream_source_changed(source))
+        super()._handle_update()
+
+    async def _async_stream_source_changed(self, source: str) -> None:
+        """Re-point the HLS worker and re-pick the WebRTC provider.
+
+        HA only checks which WebRTC provider (go2rtc) supports a camera when
+        the entity is added or a provider (un)registers, so a source that
+        appears or moves later (listener restart, Stream Host Mode change)
+        would otherwise leave the camera without WebRTC.
+        """
+        if self.stream is not None:
+            self.stream.update_source(source)
+        refresh_providers = getattr(self, "async_refresh_providers", None)
+        if refresh_providers is not None:  # HA 2024.11+
+            await refresh_providers()
 
     @property
     def motion_detection_enabled(self) -> bool:
