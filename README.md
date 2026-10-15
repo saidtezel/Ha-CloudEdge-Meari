@@ -57,14 +57,16 @@ each app's own identity during login.
   day/night, recording, anti-flicker, ONVIF, HomeKit, …) appear as native
   HA entities and write back to the camera.
 - **PTZ** — `cloudplus.ptz` service for cameras that support it.
-- **Multi-camera & multi-account** — one config entry per account, one
-  device per camera, all created automatically after login.
+- **Multi-camera & multi-account** — one integration entry per account,
+  with each camera as a sub-entry (its own device), all created
+  automatically after login.
 
 ---
 
 ## Requirements
 
-- Home Assistant **2024.1+**
+- Home Assistant **2025.3+** (camera sub-entries; WebRTC live view needs
+  HA's built-in go2rtc, part of the default config)
 - A Meari-compatible app account with at least one camera already paired in
   the official app
 - `ffmpeg` (bundled in HAOS, HA Container, and HA Supervised)
@@ -106,7 +108,9 @@ each app's own identity during login.
    | Phone code    | International dial code (e.g. `33` for France). |
    | App profile   | Choose the matching profile from [Supported apps](#supported-apps). |
 
-4. All cameras on the account are discovered and added as individual devices.
+4. All cameras on the account are discovered and added automatically. The
+   integration page shows **one entry per account**, with each camera
+   listed under it as a sub-entry that has its own device.
 
 > 💡 **Use a secondary account.** The Meari MQTT broker only allows one live
 > session per account at a time. If Home Assistant logs in with the same
@@ -114,19 +118,37 @@ each app's own identity during login.
 > vice-versa). Create a second cloud account and share the camera(s) with it
 > (or add it to the "family / home") before adding it to HA.
 
-### Per-camera options
+### Managing cameras
 
-Open any camera device → **Configure**:
+On the integration page, each camera is a sub-entry under its account:
 
-| Option            | Description |
-|-------------------|-------------|
-| Video password    | If you enabled **E2EE / video encryption** in the app, enter that 6-digit code here so the stream can be decrypted. Leave empty otherwise. |
+- **Video password** — open the camera sub-entry's ⋮ menu → **Reconfigure**.
+  If you enabled **E2EE / video encryption** in the app, enter that 6-digit
+  code so the stream can be decrypted; leave it empty otherwise.
+- **Remove a camera** — ⋮ → **Delete** on its sub-entry. It stays removed
+  across restarts.
+- **Add a camera back** (or one HA hasn't picked up) — **Add camera** on the
+  account entry lists the account's cameras that aren't added yet.
+- **Pause a camera without deleting it** — disable its device. The
+  integration stops connecting to it until you enable the device again.
+
+New cameras paired to the account later are added automatically the next
+time the integration loads (e.g. after a restart).
 
 ### Per-account options
 
-Open the account device → **Configure** — update the password / country /
-phone code / app profile in place. Changes are propagated to every camera
-entry automatically.
+Open the account entry → **Configure** — update the password / country /
+phone code / app profile in place. Every camera on the account picks up
+the change.
+
+### Upgrading from 0.3.x
+
+Earlier versions created a separate integration entry for every camera next
+to the account entry. On first start after upgrading, each camera entry is
+folded into its account as a sub-entry: devices, entity IDs, history,
+areas, the video password and the stream settings all carry over, and the
+old camera entries disappear. A camera whose entry you had disabled comes
+back as a disabled device.
 
 ---
 

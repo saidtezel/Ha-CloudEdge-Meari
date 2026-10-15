@@ -7,7 +7,8 @@ import logging
 import subprocess
 import threading
 import time
-from typing import Any, Callable, TYPE_CHECKING
+from collections.abc import Mapping
+from typing import Any, Callable
 
 from homeassistant.core import HomeAssistant
 
@@ -51,9 +52,6 @@ from .muxer import FfmpegMuxer
 from .state import CoordinatorStateMixin
 from .stream_server import StreamServer
 
-if TYPE_CHECKING:
-    from homeassistant.config_entries import ConfigEntry
-
 _LOGGER = logging.getLogger(__name__)
 
 IDLE_ADVERTISED_FPS = 15.0
@@ -79,6 +77,9 @@ SESSION_RETRY_MAX_S = 300.0
 class CloudEdgeMeariCoordinator(CoordinatorStateMixin):
     """Small runtime coordinator used by debug.py and camera entity."""
 
+    # Camera subentry this coordinator serves; entities save settings there.
+    subentry_id: str | None = None
+
     def __init__(
         self,
         hass: HomeAssistant,
@@ -93,10 +94,9 @@ class CloudEdgeMeariCoordinator(CoordinatorStateMixin):
         initial_grab_timeout: int = 45,
         snapshot_conversion_enabled: bool = True,
         snapshot_min_interval: float = 10.0,
-        entry: "ConfigEntry | None" = None,
+        settings: Mapping[str, Any] | None = None,
     ) -> None:
         self.hass = hass
-        self._entry = entry
         self._email = email
         self._password = password
         self._device = device
@@ -134,7 +134,7 @@ class CloudEdgeMeariCoordinator(CoordinatorStateMixin):
         self._motion_type = ""
         self._motion_detected = False
         self._last_motion_time = 0.0
-        options = entry.options if entry else {}  # settings persisted by entities
+        options = settings or {}  # settings persisted by entities
         self._motion_wake_enabled = bool(options.get(CONF_MOTION_WAKE, True))
         self._motion_timeout = self.clamp_motion_timeout(
             options.get(CONF_MOTION_TIMEOUT, DEFAULT_MOTION_TIMEOUT)

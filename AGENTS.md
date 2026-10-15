@@ -53,7 +53,16 @@ pip install pylint   # linter (dev only)
 ## Iteration loop
 
 Run `python -m unittest discover -s tests -v` for offline regression
-coverage. Validate hardware behaviour changes with the harness:
+coverage. Config-entry setup, camera subentries and the legacy-entry
+migration are tested against a real HA core in `tests/ha` (separate venv;
+dev-only dependency, not a runtime requirement):
+
+```bash
+pip install pytest-homeassistant-custom-component PyTurboJPEG pycryptodome paho-mqtt
+pytest tests/ha
+```
+
+Validate hardware behaviour changes with the harness:
 
 ```bash
 python debug.py list                                              # auth + discovery
@@ -93,8 +102,12 @@ adding suppressions.
   re-issue → reconnect. Old frames create visible time travel.
 - **One Meari MQTT session per account.** See
   [docs/motion-events.md](docs/motion-events.md).
-- **Config-entry topology**: one account entry (no `sn_num`) + N camera
-  entries. `_linked_account_entry()` walks camera → account.
+- **Config-entry topology**: one account entry per Meari account, each
+  camera a `camera` subentry of it (`config_entries` VERSION 3). Platforms
+  add each camera's entities with `config_subentry_id`; per-camera settings
+  live in the subentry's `data`. Legacy per-camera entries (VERSION ≤ 2)
+  are folded in by [migration.py](custom_components/cloudplus/migration.py)
+  from `async_setup`.
 
 ## Permissions
 
@@ -118,7 +131,7 @@ traffic beyond a normal stream.
   not from the user — don't treat them as user secrets, but don't add real
   secrets next to them either.
 - The per-camera E2EE video password lives in
-  `entry.options[CONF_VIDEO_PASSWORD]`. Never log it, never include it in
+  the camera subentry's `data[CONF_VIDEO_PASSWORD]`. Never log it, never include it in
   errors or telemetry.
 
 ## Deeper docs

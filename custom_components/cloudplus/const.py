@@ -16,6 +16,20 @@ CONF_MOTION_WAKE = "motion_wake"
 CONF_STREAM_HOST_MODE = "stream_host_mode"
 CONF_VIDEO_PASSWORD = "video_password"
 CONF_STREAM_QUALITY = "stream_quality"
+CONF_KNOWN_CAMERAS = "known_cameras"
+CONF_DEVICE = "device"
+
+# One account config entry holds one "camera" subentry per camera.
+SUBENTRY_TYPE_CAMERA = "camera"
+# Per-camera keys stored in a camera subentry's data (legacy camera entries
+# kept these in their options).
+CAMERA_SETTING_KEYS = (
+    CONF_VIDEO_PASSWORD,
+    CONF_STREAM_QUALITY,
+    CONF_STREAM_HOST_MODE,
+    CONF_MOTION_WAKE,
+    CONF_MOTION_TIMEOUT,
+)
 
 DEFAULT_MOTION_TIMEOUT = 120
 MOTION_TIMEOUT_MIN = 10

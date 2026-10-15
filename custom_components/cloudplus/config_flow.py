@@ -11,8 +11,11 @@ from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
+    ConfigSubentryFlow,
     OptionsFlow,
+    SubentryFlowResult,
 )
+from homeassistant.core import callback
 from homeassistant.helpers import selector
 
 from .const import (
@@ -20,6 +23,7 @@ from .const import (
     APP_PROFILES,
     CONF_APP_PROFILE,
     CONF_COUNTRY_CODE,
+    CONF_DEVICE_NAME,
     CONF_EMAIL,
     CONF_PHONE_CODE,
     CONF_PASSWORD,
@@ -29,8 +33,11 @@ from .const import (
     DEFAULT_COUNTRY_CODE,
     DEFAULT_PHONE_CODE,
     DOMAIN,
+    SUBENTRY_TYPE_CAMERA,
 )
 from .api import build_api_client
+from .migration import CONFIG_VERSION, camera_subentry_data
+from .runtime import cameras_in_other_entries
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -69,15 +76,27 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
 
 
 class CloudEdgeMeariConfigFlow(ConfigFlow, domain=DOMAIN):
-    """Config flow — one account entry; cameras are created automatically on setup."""
+    """One entry per account; each camera is a ``camera`` subentry of it.
 
-    VERSION = 2
+    Cameras found on the account are added automatically when the entry is
+    set up; "Add camera" re-adds one that was deleted.
+    """
+
+    VERSION = CONFIG_VERSION
 
     @staticmethod
     def async_get_options_flow(
         config_entry: ConfigEntry,
     ) -> "CloudEdgeMeariOptionsFlow":
         return CloudEdgeMeariOptionsFlow(config_entry)
+
+    @classmethod
+    @callback
+    def async_get_supported_subentry_types(
+        cls, config_entry: ConfigEntry
+    ) -> dict[str, type[ConfigSubentryFlow]]:
+        del config_entry  # every account supports cameras
+        return {SUBENTRY_TYPE_CAMERA: CameraSubentryFlow}
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -127,20 +146,6 @@ class CloudEdgeMeariConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
         )
 
-    async def async_step_import(self, import_data: dict[str, Any]) -> ConfigFlowResult:
-        """Create a camera entry from account setup (migration + auto-discovery)."""
-        sn = str(import_data.get(CONF_SN_NUM, "")).strip()
-        if not sn:
-            return self.async_abort(reason="unknown")
-
-        await self.async_set_unique_id(sn)
-        self._abort_if_unique_id_configured()
-
-        name = str(import_data.get("device_name", sn)).strip() or sn
-        email = str(import_data.get(CONF_EMAIL, "")).strip()
-        title = f"{name} ({email})" if email else name
-        return self.async_create_entry(title=title, data=import_data)
-
 
 # ---------------------------------------------------------------------------
 # Options flows
@@ -148,7 +153,7 @@ class CloudEdgeMeariConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class CloudEdgeMeariOptionsFlow(OptionsFlow):
-    """Single options flow that adapts to account vs camera entry."""
+    """Account credentials; reloading the entry restarts every camera."""
 
     def __init__(self, config_entry: ConfigEntry) -> None:
         self._config_entry = config_entry
@@ -156,49 +161,10 @@ class CloudEdgeMeariOptionsFlow(OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        if CONF_SN_NUM in self._config_entry.data:
-            return await self._camera_options(user_input)
         return await self._account_options(user_input)
 
     # ------------------------------------------------------------------
-    # Camera entry — only E2EE video password
-    # ------------------------------------------------------------------
-
-    async def _camera_options(
-        self, user_input: dict[str, Any] | None
-    ) -> ConfigFlowResult:
-        current_options = dict(self._config_entry.options)
-        current_video_password = _clean_optional_text(
-            current_options.get(CONF_VIDEO_PASSWORD)
-        )
-
-        if user_input is not None:
-            new_options = dict(current_options)
-            video_password = _clean_optional_text(user_input.get(CONF_VIDEO_PASSWORD))
-            if video_password:
-                new_options[CONF_VIDEO_PASSWORD] = video_password
-            else:
-                new_options.pop(CONF_VIDEO_PASSWORD, None)
-            self.hass.config_entries.async_update_entry(
-                self._config_entry, options=new_options
-            )
-            await self.hass.config_entries.async_reload(self._config_entry.entry_id)
-            # Return saved options to avoid the flow finalization clearing them.
-            return self.async_create_entry(title="", data=new_options)
-
-        return self.async_show_form(
-            step_id="init",
-            data_schema=vol.Schema(
-                {
-                    vol.Optional(
-                        CONF_VIDEO_PASSWORD, default=current_video_password
-                    ): str,
-                }
-            ),
-        )
-
-    # ------------------------------------------------------------------
-    # Account entry — credentials; propagated to all child camera entries
+    # Account entry — credentials, shared by every camera subentry
     # ------------------------------------------------------------------
 
     async def _account_options(
@@ -234,27 +200,6 @@ class CloudEdgeMeariOptionsFlow(OptionsFlow):
                 self._config_entry, data=new_data
             )
 
-            # Propagate updated credentials to all child camera entries.
-            account_entry_id = self._config_entry.entry_id
-            for cam_entry in self.hass.config_entries.async_entries(DOMAIN):
-                if cam_entry.data.get("account_entry_id") != account_entry_id:
-                    continue
-                # Fetch fresh entry from registry to ensure options are up-to-date
-                fresh_cam = self.hass.config_entries.async_get_entry(cam_entry.entry_id)
-                if fresh_cam is None:
-                    continue
-                cam_data = dict(fresh_cam.data)
-                cam_data[CONF_PASSWORD] = new_data[CONF_PASSWORD]
-                cam_data[CONF_COUNTRY_CODE] = new_data[CONF_COUNTRY_CODE]
-                cam_data[CONF_PHONE_CODE] = new_data[CONF_PHONE_CODE]
-                cam_data[CONF_APP_PROFILE] = new_data[CONF_APP_PROFILE]
-                self.hass.config_entries.async_update_entry(
-                    fresh_cam, data=cam_data, options=dict(fresh_cam.options)
-                )
-                self.hass.async_create_task(
-                    self.hass.config_entries.async_reload(fresh_cam.entry_id)
-                )
-
             await self.hass.config_entries.async_reload(self._config_entry.entry_id)
             # Preserve any existing options on the account entry.
             return self.async_create_entry(
@@ -272,5 +217,119 @@ class CloudEdgeMeariOptionsFlow(OptionsFlow):
                         CONF_APP_PROFILE, default=app_profile
                     ): _app_profile_selector(),
                 }
+            ),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Camera subentries
+# ---------------------------------------------------------------------------
+
+
+def _video_password_schema(default: str = "") -> vol.Schema:
+    return vol.Schema({vol.Optional(CONF_VIDEO_PASSWORD, default=default): str})
+
+
+def _with_video_password(data: dict[str, Any], raw: Any) -> dict[str, Any]:
+    password = _clean_optional_text(raw)
+    if password:
+        data[CONF_VIDEO_PASSWORD] = password
+    else:
+        data.pop(CONF_VIDEO_PASSWORD, None)
+    return data
+
+
+class CameraSubentryFlow(ConfigSubentryFlow):
+    """Add a camera from the account, or change its E2EE video password."""
+
+    def __init__(self) -> None:
+        self._devices: dict[str, dict[str, Any]] = {}
+
+    def _account_entry(self) -> ConfigEntry:
+        # handler is (entry_id, subentry_type); _get_entry() needs HA 2025.4+.
+        entry = self.hass.config_entries.async_get_entry(self.handler[0])
+        assert entry is not None
+        return entry
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        entry = self._account_entry()
+        if user_input is not None and user_input.get(CONF_SN_NUM) in self._devices:
+            device = self._devices[user_input[CONF_SN_NUM]]
+            data = _with_video_password(
+                camera_subentry_data(device), user_input.get(CONF_VIDEO_PASSWORD)
+            )
+            return self.async_create_entry(
+                title=data[CONF_DEVICE_NAME], data=data, unique_id=data[CONF_SN_NUM]
+            )
+
+        client = build_api_client(
+            entry.data[CONF_EMAIL],
+            entry.data[CONF_PASSWORD],
+            entry.data.get(CONF_COUNTRY_CODE, DEFAULT_COUNTRY_CODE),
+            entry.data.get(CONF_PHONE_CODE, DEFAULT_PHONE_CODE),
+            entry.data.get(CONF_APP_PROFILE, DEFAULT_APP_PROFILE),
+        )
+
+        def _list_cameras() -> list[dict[str, Any]]:
+            client.login()
+            return client.get_camera_devices()
+
+        try:
+            devices = await self.hass.async_add_executor_job(_list_cameras)
+        except PermissionError:
+            return self.async_abort(reason="invalid_auth")
+        except (OSError, RuntimeError, ValueError, KeyError):
+            return self.async_abort(reason="cannot_connect")
+
+        configured = {subentry.unique_id for subentry in entry.subentries.values()}
+        configured |= cameras_in_other_entries(self.hass, entry)
+        self._devices = {
+            sn: device
+            for device in devices
+            if (sn := str(device.get("snNum", "")).strip()) and sn not in configured
+        }
+        if not self._devices:
+            return self.async_abort(reason="no_new_cameras")
+
+        return self.async_show_form(
+            step_id="user",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_SN_NUM): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=[
+                                selector.SelectOptionDict(
+                                    value=sn,
+                                    label=str(device.get("deviceName") or sn),
+                                )
+                                for sn, device in self._devices.items()
+                            ],
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                    vol.Optional(CONF_VIDEO_PASSWORD, default=""): str,
+                }
+            ),
+        )
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        subentry = self._get_reconfigure_subentry()
+        if user_input is not None:
+            # The entry's update listener reloads it when the password changes.
+            return self.async_update_and_abort(
+                self._account_entry(),
+                subentry,
+                data=_with_video_password(
+                    dict(subentry.data), user_input.get(CONF_VIDEO_PASSWORD)
+                ),
+            )
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=_video_password_schema(
+                _clean_optional_text(subentry.data.get(CONF_VIDEO_PASSWORD))
             ),
         )

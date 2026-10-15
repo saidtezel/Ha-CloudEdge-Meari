@@ -1,4 +1,5 @@
 {
   "name": "CloudEdge / CloudPlus / Meari",
+  "homeassistant": "2025.3.0",
   "render_readme": true
 }

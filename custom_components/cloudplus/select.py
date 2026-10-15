@@ -7,15 +7,15 @@ from dataclasses import dataclass
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import (
     CONF_STREAM_HOST_MODE,
     CONF_STREAM_QUALITY,
     DEFAULT_STREAM_HOST_MODE,
-    DOMAIN,
 )
 from .coordinator import CloudEdgeMeariCoordinator
+from .runtime import add_camera_entities
 from .entity import CloudEdgeMeariEntity, CloudEdgeMeariIotEntity
 from .meari_commands import (
     ALARM_FREQUENCY,
@@ -164,10 +164,15 @@ def _select_options(
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up CloudEdge / Meari select entities from a config entry."""
-    coord: CloudEdgeMeariCoordinator = hass.data[DOMAIN][entry.entry_id]
+    add_camera_entities(hass, entry, async_add_entities, _camera_entities)
+
+
+def _camera_entities(
+    coord: CloudEdgeMeariCoordinator, entry: ConfigEntry
+) -> list[SelectEntity]:
     entities: list[SelectEntity] = [CloudEdgeMeariStreamHostSelect(coord, entry)]
     if coord.quality_profiles:
         entities.append(CloudEdgeMeariStreamQualitySelect(coord, entry))
@@ -176,7 +181,7 @@ async def async_setup_entry(
             continue
         if options := _select_options(coord, spec):
             entities.append(CloudEdgeMeariIotSelect(coord, entry, spec, options))
-    async_add_entities(entities)
+    return entities
 
 
 class CloudEdgeMeariIotSelect(CloudEdgeMeariIotEntity, SelectEntity):

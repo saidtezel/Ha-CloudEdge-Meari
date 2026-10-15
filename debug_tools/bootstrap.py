@@ -117,6 +117,7 @@ def _bootstrap_integration_modules() -> dict[str, Any]:
     if "homeassistant.helpers.entity_platform" not in sys.modules:
         ep_mod = types.ModuleType("homeassistant.helpers.entity_platform")
         ep_mod.AddEntitiesCallback = object
+        ep_mod.AddConfigEntryEntitiesCallback = object
         sys.modules["homeassistant.helpers.entity_platform"] = ep_mod
 
     cc_pkg = sys.modules.setdefault(

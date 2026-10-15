@@ -8,10 +8,10 @@ from typing import Any
 from homeassistant.components.camera import Camera, CameraEntityFeature
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import DOMAIN
 from .coordinator import CloudEdgeMeariCoordinator
+from .runtime import add_camera_entities
 from .entity import CloudEdgeMeariEntity
 
 _LOGGER = logging.getLogger(__name__)
@@ -20,11 +20,16 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Set up CloudEdge / Meari camera from a config entry."""
-    coord: CloudEdgeMeariCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([CloudEdgeMeariCamera(coord, entry)])
+    """Set up CloudEdge / Meari cameras from a config entry."""
+    add_camera_entities(hass, entry, async_add_entities, _camera_entities)
+
+
+def _camera_entities(
+    coord: CloudEdgeMeariCoordinator, entry: ConfigEntry
+) -> list[Camera]:
+    return [CloudEdgeMeariCamera(coord, entry)]
 
 
 class CloudEdgeMeariCamera(CloudEdgeMeariEntity, Camera):

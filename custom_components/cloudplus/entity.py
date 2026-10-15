@@ -51,11 +51,12 @@ class CloudEdgeMeariEntity(Entity):
 
     @callback
     def _save_option(self, key: str, value: Any) -> None:
-        """Persist a runtime setting in the camera entry so it survives restarts."""
-        if self._entry.options.get(key) == value:
+        """Persist a runtime setting in the camera subentry so it survives restarts."""
+        subentry = self._entry.subentries.get(self._coordinator.subentry_id or "")
+        if subentry is None or subentry.data.get(key) == value:
             return
-        self.hass.config_entries.async_update_entry(
-            self._entry, options={**self._entry.options, key: value}
+        self.hass.config_entries.async_update_subentry(
+            self._entry, subentry, data={**subentry.data, key: value}
         )
 
     @property

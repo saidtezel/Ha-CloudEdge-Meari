@@ -13,10 +13,10 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import DOMAIN
 from .coordinator import CloudEdgeMeariCoordinator
+from .runtime import add_camera_entities
 from .entity import CloudEdgeMeariEntity, CloudEdgeMeariIotNumericEntity
 from .meari_commands import HUMIDITY, TEMPERATURE, WIFI_STRENGTH
 
@@ -116,10 +116,15 @@ def _supports_sensor(coordinator: CloudEdgeMeariCoordinator, spec: IotSensorSpec
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up CloudEdge / Meari sensors from a config entry."""
-    coord: CloudEdgeMeariCoordinator = hass.data[DOMAIN][entry.entry_id]
+    add_camera_entities(hass, entry, async_add_entities, _camera_entities)
+
+
+def _camera_entities(
+    coord: CloudEdgeMeariCoordinator, entry: ConfigEntry
+) -> list[SensorEntity]:
     entities: list[SensorEntity] = []
     if coord.is_battery_camera:
         entities.append(CloudEdgeMeariBatterySensor(coord, entry))
@@ -129,7 +134,7 @@ async def async_setup_entry(
         for spec in IOT_SENSORS
         if _supports_sensor(coord, spec)
     )
-    async_add_entities(entities)
+    return entities
 
 
 class CloudEdgeMeariIotSensor(CloudEdgeMeariIotNumericEntity, SensorEntity):
