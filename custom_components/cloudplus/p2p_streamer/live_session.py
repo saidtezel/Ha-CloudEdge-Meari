@@ -84,6 +84,8 @@ class LiveSessionMixin:
         fire_wake: Callable[[], None] | None = None,
     ) -> tuple[int, int]:
         local_ips = _get_local_ips()
+        if not self._remote:
+            _LOGGER.debug("Offering host candidates %s", ", ".join(local_ips))
         ice_ufrag = os.urandom(4).hex()
         ice_pwd = os.urandom(12).hex()
 
@@ -522,6 +524,20 @@ class LiveSessionMixin:
                 _drain_kcp_queue()
                 _process_pending_payloads()
 
+        def _note_direct_ice(peer: tuple[str, int], *, from_camera: bool) -> None:
+            # A request is the camera checking us (camera -> HA works); a
+            # response answers our check (HA -> camera works). Media goes
+            # direct only when the camera's own checks succeed.
+            key = "requests" if from_camera else "responses"
+            self.direct_ice_counts[key] += 1
+            if self.direct_ice_counts[key] == 1:
+                _LOGGER.debug(
+                    "Direct ICE %s %s",
+                    "check from camera at" if from_camera else "reply from",
+                    format_endpoint(peer),
+                )
+            direct_ice_peer[0] = peer
+
         def _handle_peer_packet(packet) -> None:
             nonlocal candidate_fanout_until, last_udp_time, last_kcp_push_time
             last_udp_time = time.time()
@@ -539,7 +555,7 @@ class LiveSessionMixin:
                 msg_type = parsed.get("type")
                 if msg_type == BINDING_REQUEST and peer is not None:
                     if not packet.via_turn and not self._remote:
-                        direct_ice_peer[0] = peer
+                        _note_direct_ice(peer, from_camera=True)
                     try:
                         response = _build_ice_response(
                             parsed, ice_pwd, peer[0], peer[1]
@@ -553,7 +569,7 @@ class LiveSessionMixin:
                     return
                 if msg_type == BINDING_RESPONSE:
                     if peer is not None and not packet.via_turn and not self._remote:
-                        direct_ice_peer[0] = peer
+                        _note_direct_ice(peer, from_camera=False)
                     kcp.retransmit_unacked()
                     return
 
@@ -579,6 +595,7 @@ class LiveSessionMixin:
                     current = confirmed_peer[0]
                     if current is None or (direct and not current[2]):
                         confirmed_peer[0] = (peer[0], peer[1], direct)
+                        self._last_peer_endpoint = (peer[0], peer[1])
                         if direct:
                             # Prefer confirmed LAN media and stop fallback fanout.
                             self.direct_confirmed = True
