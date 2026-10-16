@@ -99,6 +99,7 @@ setup, so they survive restarts.
 | `motion.py` | Translates raw MQTT alarms into HA binary-sensor pulses. |
 | `iot.py` | Capability parsing and feature checks, IoT value normalization/lookups. |
 | `mpegts.py` + `muxer.py` | ffmpeg-based MPEG-TS muxer (video copy, audio encode). |
+| `video_cadence.py` | Per-frame live video PTS steps from the camera's frame timestamps (HEVC). |
 | `audio_encoder.py` | G.711 µ-law → AAC. |
 | `stream_server.py` + `stream_bootstrap.py` | TCP fan-out of MPEG-TS, PAT/PMT seed, idle-stream loop. Listens on loopback unless Stream Host Mode exposes it on the LAN. Each client gets bare MPEG-TS (raw TCP) or, if it opens with a GET, an HTTP response first: HA's go2rtc client can't parse a connected `tcp://` producer, so `stream_source` is `http://`. |
 | `backoff.py` | `RetryBackoff`, the exponential delay shared by the session loop and the motion-event poller. |

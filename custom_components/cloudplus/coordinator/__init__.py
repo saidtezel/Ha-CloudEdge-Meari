@@ -51,6 +51,7 @@ from .motion import MotionEventListener
 from .muxer import FfmpegMuxer
 from .state import CoordinatorStateMixin
 from .stream_server import StreamServer
+from .video_cadence import VideoCadence
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -187,7 +188,7 @@ class CloudEdgeMeariCoordinator(CoordinatorStateMixin):
         self._last_p2p_audio_time = 0.0
         self._last_video_time = 0.0
         self._last_mux_video_mono = 0.0
-        self._last_mux_video_timestamp_ms: int | None = None
+        self._video_cadence = VideoCadence()
         self._last_p2p_video_gap_time = 0.0
         self._live_mux_ready = False
         self._live_first_video_time = 0.0
@@ -433,6 +434,7 @@ class CloudEdgeMeariCoordinator(CoordinatorStateMixin):
                 self._stream_server.reset_bootstrap()
                 self._stream_started_keyframe = False
                 self._reset_live_mux_timing()
+                self._video_cadence.clear()
                 continue
             worker = self._stream_thread
             if worker is None or not worker.is_alive():
@@ -653,7 +655,7 @@ class CloudEdgeMeariCoordinator(CoordinatorStateMixin):
 
     def _reset_live_mux_timing(self) -> None:
         self._last_mux_video_mono = 0.0
-        self._last_mux_video_timestamp_ms = None
+        self._video_cadence.reset()
 
     def _next_live_video_interval(
         self, now: float, timestamp_ms: int | None
@@ -667,21 +669,10 @@ class CloudEdgeMeariCoordinator(CoordinatorStateMixin):
                 return None
             return max(LIVE_VIDEO_MIN_INTERVAL, now - last)
 
-        if (
-            not uses_timestamp_timed_mux(self._video_codec, adaptive=adaptive)
-            or timestamp_ms is None
-        ):
+        if not uses_timestamp_timed_mux(self._video_codec, adaptive=adaptive):
             return None
 
-        current_ts = int(timestamp_ms) & 0xFFFFFFFF
-        previous_ts = self._last_mux_video_timestamp_ms
-        self._last_mux_video_timestamp_ms = current_ts
-        if previous_ts is None:
-            return None
-        delta_ms = (current_ts - previous_ts) & 0xFFFFFFFF
-        if delta_ms == 0 or delta_ms > 0x7FFFFFFF:
-            return None
-        return max(0.001, delta_ms / 1000.0)
+        return self._video_cadence.interval_for(timestamp_ms)
 
     def _stream_quality(self) -> int | None:
         return self._vvp_quality
@@ -819,6 +810,7 @@ class CloudEdgeMeariCoordinator(CoordinatorStateMixin):
                 self._muxer.stop()
                 self._stream_started_keyframe = False
                 self._reset_live_mux_timing()
+                self._video_cadence.clear()
 
             self._codec_params.update(self._video_codec, payload)
             if not self._codec_params.ready(self._video_codec):
