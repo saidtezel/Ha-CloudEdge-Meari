@@ -343,6 +343,7 @@ class CloudEdgeMeariCoordinator(CoordinatorStateMixin):
                 next_grab_retry = time.monotonic() + idle_retry_s
 
             self._consume_wake_event()
+            self._expire_motion()
             if self._motion_detected and self._motion_wake_enabled:
                 self._live_deadline = max(
                     self._live_deadline,
@@ -370,6 +371,7 @@ class CloudEdgeMeariCoordinator(CoordinatorStateMixin):
                 self._poll_status()
                 last_status_poll = now
             self._consume_wake_event()
+            self._expire_motion()
             should_stream = (
                 self._stream_server.client_count > 0
                 or time.monotonic() < self._live_deadline
@@ -423,6 +425,7 @@ class CloudEdgeMeariCoordinator(CoordinatorStateMixin):
         while self._running and time.monotonic() < self._live_deadline:
             now = time.monotonic()
             self._consume_wake_event()
+            self._expire_motion()
             if self._stream_restart.is_set():
                 self._stream_restart.clear()
                 self._stop_streamer(join_timeout=2)
@@ -457,7 +460,7 @@ class CloudEdgeMeariCoordinator(CoordinatorStateMixin):
         if self._running and time.monotonic() < self._live_deadline:
             return
         self._request_streamer_stop()
-        self._set_motion(False)
+        self._expire_motion()
         self._prime_idle_stream()
         if time.monotonic() >= self._live_deadline:
             self._set_camera_awake(False)

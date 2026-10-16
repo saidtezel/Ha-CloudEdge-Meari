@@ -399,6 +399,14 @@ class CoordinatorStateMixin:
             self._fire_motion()
             self._fire_update()
 
+    def _expire_motion(self) -> None:
+        """Clear motion once no event has arrived for the motion timeout."""
+        if (
+            self._motion_detected
+            and time.monotonic() - self._last_motion_time >= self._motion_timeout
+        ):
+            self._set_motion(False)
+
     def _extend_live_deadline(self, seconds: float | None = None) -> None:
         duration = float(seconds if seconds is not None else self._motion_timeout)
         self._live_deadline = max(self._live_deadline, time.monotonic() + duration)

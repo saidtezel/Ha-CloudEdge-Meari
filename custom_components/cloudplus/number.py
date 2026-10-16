@@ -150,9 +150,7 @@ async def async_setup_entry(
 def _camera_entities(
     coord: CloudEdgeMeariCoordinator, entry: ConfigEntry
 ) -> list[NumberEntity]:
-    entities: list[NumberEntity] = []
-    if coord.is_battery_camera:
-        entities.append(CloudEdgeMeariMotionTimeout(coord, entry))
+    entities: list[NumberEntity] = [CloudEdgeMeariMotionTimeout(coord, entry)]
     entities.extend(
         CloudEdgeMeariIotNumber(coord, entry, spec)
         for spec in IOT_NUMBERS
@@ -194,7 +192,10 @@ class CloudEdgeMeariIotNumber(CloudEdgeMeariIotNumericEntity, NumberEntity):
 
 
 class CloudEdgeMeariMotionTimeout(CloudEdgeMeariEntity, NumberEntity):
-    """Number entity to control the motion-wake timeout (seconds)."""
+    """How long Motion stays on after the last event (seconds).
+
+    Battery cameras with Wake on Motion also stay awake this long.
+    """
 
     _attr_name = "Motion Timeout"
     _attr_icon = "mdi:timer-outline"

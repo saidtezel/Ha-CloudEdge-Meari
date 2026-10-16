@@ -169,7 +169,7 @@ discovered from the camera's IoT model values.
 | Charge Status       | `sensor`        | Discharging / Charging / Full text status. |
 | Wake Camera         | `button`        | Manually wake the camera. |
 | Wake on Motion      | `switch`        | Toggle auto-wake when a motion event fires. |
-| Motion Timeout      | `number`        | How long the camera stays awake after motion (10–600 s). |
+| Motion Timeout      | `number`        | How long Motion stays on after the last alert, and how long a battery camera stays awake after it (10–600 s). |
 | Stream Host Mode    | `select`        | `Local Only` (default), `IP Address` or `Docker Hostname` — who can connect to the stream, see [Streaming notes](#streaming-notes). |
 | Stream Quality      | `select`        | `AUTO`, `SD`, `HD`, `QHD`, … — advertised profiles, or the native HD/SD fallback for legacy cameras. |
 

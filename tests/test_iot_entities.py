@@ -251,4 +251,8 @@ class NumberTests(unittest.IsolatedAsyncioTestCase):
         hass = account_hass(entry, coord)
         add_entities = Mock()
         await NUMBER.async_setup_entry(hass, entry, add_entities)
-        self.assertEqual(add_entities.call_args.args[0], [])
+        iot_numbers = [
+            entity for entity in add_entities.call_args.args[0]
+            if isinstance(entity, NUMBER.CloudEdgeMeariIotNumber)
+        ]
+        self.assertEqual(iot_numbers, [])

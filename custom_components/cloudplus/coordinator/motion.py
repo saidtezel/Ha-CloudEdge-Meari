@@ -125,8 +125,8 @@ class MotionEventListener:
         self._lock = threading.Lock()
         self._stop_poll = threading.Event()
         self._poll_thread: threading.Thread | None = None
-        self._seen_alarm_keys: set[tuple[str, str]] = set()
-        self._poll_day: str = ""
+        # Insertion-ordered (a dict used as a set) so trimming drops the oldest.
+        self._seen_alarm_keys: dict[tuple[str, str], None] = {}
         self._mqtt_connect_warned = False
 
     @property
@@ -311,14 +311,17 @@ class MotionEventListener:
         key = (device_id, event_id)
         if key in self._seen_alarm_keys:
             return False
-        self._seen_alarm_keys.add(key)
+        self._seen_alarm_keys[key] = None
         return True
 
     def _trim_seen_events(self) -> None:
-        if len(self._seen_alarm_keys) > _SEEN_ALARM_CAP:
-            # Keep bounded; trimming oldest is fine because only events newer
-            # than the last poll can ever be dispatched.
-            self._seen_alarm_keys = set(list(self._seen_alarm_keys)[-_SEEN_ALARM_CAP:])
+        excess = len(self._seen_alarm_keys) - _SEEN_ALARM_CAP
+        if excess > 0:
+            # Drop the oldest keys: anything still in today's log or the
+            # new-event summary was seen recently and must stay remembered,
+            # or the next poll dispatches it again as fresh motion.
+            for key in list(self._seen_alarm_keys)[:excess]:
+                del self._seen_alarm_keys[key]
 
     def _event_id(self, raw_event: dict, *, prefix: str = "") -> str:
         event_id = str(
@@ -359,13 +362,10 @@ class MotionEventListener:
 
     def _poll_device_events(self, dispatch: bool) -> bool:
         """Poll each registered device's event log and dispatch new motions."""
+        # Seen keys are kept across midnight (the cap bounds them): the
+        # new-event summary is not per-day, and forgetting its keys would
+        # re-dispatch yesterday's events as motion.
         day = time.strftime("%Y%m%d")
-        if day != self._poll_day:
-            # Day rolled over: yesterday's ids won't reappear in today's log, so
-            # drop them. New events on the fresh day still dispatch normally.
-            self._poll_day = day
-            self._seen_alarm_keys.clear()
-
         with self._lock:
             devices = {(dev_id, sn) for dev_id, sn, _cb in self._callbacks}
         if not devices:
@@ -393,7 +393,7 @@ class MotionEventListener:
                 key = (str(device_id), msg_id)
                 if key in self._seen_alarm_keys:
                     continue
-                self._seen_alarm_keys.add(key)
+                self._seen_alarm_keys[key] = None
                 if dispatch:
                     self._handle_payload(json.dumps(raw_event).encode())
 
