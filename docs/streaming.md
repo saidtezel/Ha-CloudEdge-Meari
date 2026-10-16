@@ -157,20 +157,19 @@ that pauses video but keeps sending audio or ICE replies is not "silent" and
 still gets the patient path above. Snap (battery) cameras are exempt: their
 radio power-save can go fully quiet and recover by itself.
 
-**Open: a camera that ends every session at 120 s.** A mains-powered QHD
-HEVC camera on a routed LAN (Arenti profile, different subnet from HA)
-stops sending all UDP exactly 120 s after the SDP answer, every session,
-and answers a new session at once. Captured per session: it checks our host
-candidate once a second with one transaction ID for 60 s, sends Binding
-Indications at +60 s and +90 s, streams all media from its TURN relay (its
-`nego` reply says `mode 3` to our `mode 1`), then goes silent. Ruled out by
-capture or live test: MsgSvr heartbeats (sent every `hb` = 30 s and
-answered), TURN Refresh (the camera goes quiet before ours fires), camera
-load (reproduced with Scrypted stopped), sending our KCP to its relay
-instead of its LAN host, and answering its checks with XOR-MAPPED-ADDRESS +
-MESSAGE-INTEGRITY instead of a bare success. The dead-peer reconnect above
-limits each occurrence to a ~5 s freeze. Comparing against an official-app
-capture of this camera is the next step.
+**Repeat the webrtcsvr `hello` while live.** A mains-powered QHD HEVC camera
+on a routed LAN (Arenti profile, different subnet from HA) stopped sending
+all UDP exactly 120 s after the SDP answer, every session, when the client
+sent `hello` only once at setup. An official iOS app capture of the same
+camera streamed 196 s without a break; its only behavioural difference was
+re-sending `hello` on the MsgSvr socket every ~21 s for the whole session
+(ICE, the 30 s MsgSvr heartbeat, IVA and VVP heartbeats all matched ours).
+The live loop now sends it every `WEBRTC_HELLO_S` (21 s) on a side thread,
+like the heartbeat. Ruled out before that by capture or live test: TURN
+Refresh, camera load, sending our KCP to the camera's relay instead of its
+LAN host, and signed (XOR-MAPPED-ADDRESS + MESSAGE-INTEGRITY) answers to its
+checks — the app answers them bare too, and the camera re-sends one check
+transaction for 60 s with the app as well.
 
 ## Direct-LAN media
 

@@ -91,6 +91,11 @@ ordering, source-idle recovery, wake retries) see [streaming.md](streaming.md).
 - The WebRTC-like flow is: register / hello → device status → coturn
   credentials → SDP offer with local *host*, *mapped* and *relay* candidates
   → SDP answer + trickle → candidate-complete.
+- While live, the official app keeps the MsgSvr socket alive with the
+  heartbeat (`0xC9`, every register `hb` = 30 s) **and** re-sends the
+  webrtcsvr `hello` (`0xC6`, every ~21 s; each reply carries a fresh `tag`).
+  Without the repeated `hello`, at least one Arenti HEVC camera ends the
+  session 120 s after the SDP answer. See [streaming.md](streaming.md).
 - Dormant cameras expose two native wake sequences. Prefer coturn + offer while
   dormant when the server supplies credentials; the SDP answer then confirms
   the wake without waiting 40–60 s for `online`. Older cameras may withhold
