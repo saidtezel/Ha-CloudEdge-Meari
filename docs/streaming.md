@@ -185,9 +185,22 @@ stale client joins, and source-idle recovery, but not while video is current.
 
 ## Timing rules
 
-- Camera timestamps can be unstable across stalls, especially with HEVC and
-  AUTO. The muxer **generates stable video PTS** at the advertised FPS and
-  caps audio lead so audio cannot run seconds ahead while video is stalled.
+- **HEVC video PTS follows the camera's frame timestamps**, not the
+  advertised FPS. Cameras run at their own rate (e.g. 10 fps on the V-Link
+  Baby 3Q); stamping them at a fixed 15 fps made PTS advance ~1.5x slower
+  than wall-clock, so players ran the video fast and then starved.
+  `VideoCadence` (`coordinator/video_cadence.py`) uses each step between
+  consecutive camera timestamps (32-bit wrap handled) as that frame's PTS
+  interval when it lies in 1/60 s – 1.0 s, so a dropped frame keeps its slot.
+  Camera timestamps are unstable across stalls and reconnects, especially
+  with AUTO, so any other step (first frame, repeat, backward jump, stall,
+  missing timestamp) uses the median of recent accepted steps instead — a
+  stall never becomes a PTS jump. A new P2P session forgets the timestamp
+  base but keeps the learned cadence; a codec or quality change forgets
+  both. Until a cadence is learned the muxer falls back to the advertised
+  FPS. H.264 still uses the advertised FPS.
+- The muxer caps audio lead so audio cannot run seconds ahead while video is
+  stalled.
 - **Video PTS stays monotonic across reconnects.** A single muxer feeds one
   unbroken TS stream for the whole live session, but a reconnect restarts the
   ffmpeg child. The muxer carries the PTS base forward instead of resuming at
