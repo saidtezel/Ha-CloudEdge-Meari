@@ -59,6 +59,7 @@ from .session_support import (
     ICE_KEEPALIVE_INTERVAL_S,
     IVA_HEARTBEAT_S,
     VVP_HEARTBEAT_S,
+    WEBRTC_HELLO_S,
     _unwrap_iva_payload,
     peer_gone,
 )
@@ -291,6 +292,8 @@ class LiveSessionMixin:
         )
         next_signal_heartbeat = time.time() + max(5.0, signal_heartbeat_s * 2.0 / 3.0)
         signal_heartbeat_pending = [False]
+        next_webrtc_hello = time.time() + WEBRTC_HELLO_S
+        webrtc_hello_pending = [False]
         last_ack_probe = 0.0
         last_gap_nudge = 0.0
         last_gap_skip = 0.0
@@ -373,6 +376,14 @@ class LiveSessionMixin:
                 _LOGGER.debug("Signaling heartbeat failed", exc_info=True)
             finally:
                 signal_heartbeat_pending[0] = False
+
+        def _send_webrtc_hello() -> None:
+            try:
+                sig.send_webrtc_hello(read_response=True)
+            except (OSError, ValueError):
+                _LOGGER.debug("Signaling webrtc hello failed", exc_info=True)
+            finally:
+                webrtc_hello_pending[0] = False
 
         def _send_ice_checks() -> None:
             for cand in camera_candidates:
@@ -723,6 +734,16 @@ class LiveSessionMixin:
                         daemon=True,
                     ).start()
                 next_signal_heartbeat = now + signal_heartbeat_s
+
+            if now >= next_webrtc_hello:
+                if not webrtc_hello_pending[0]:
+                    webrtc_hello_pending[0] = True
+                    threading.Thread(
+                        target=_send_webrtc_hello,
+                        name=f"cloudplus_webrtc_hello_{self._sn_num}",
+                        daemon=True,
+                    ).start()
+                next_webrtc_hello = now + WEBRTC_HELLO_S
 
             if self._keyframe_request.is_set():
                 self._keyframe_request.clear()

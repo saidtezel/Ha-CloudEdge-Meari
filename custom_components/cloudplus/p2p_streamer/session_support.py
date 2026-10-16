@@ -14,6 +14,10 @@ from typing import Any
 from ..kcp_tunnel import parse_iva_frame
 
 IVA_HEARTBEAT_S = 3.0
+# The official app re-sends the webrtcsvr `hello` on the MsgSvr socket every
+# ~21 s while live. A camera on a session that never repeats it stops sending
+# everything 120 s after the SDP answer (captured on an Arenti HEVC camera).
+WEBRTC_HELLO_S = 21.0
 VVP_HEARTBEAT_S = 10.0
 AUTH_FALLBACK_NO_VIDEO_S = 10.0
 # Cold-wake of a deeply asleep snap/battery camera is camera-side and highly

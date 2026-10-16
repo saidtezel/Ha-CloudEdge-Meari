@@ -205,8 +205,21 @@ class MsgSvrClient:
             },
             separators=(",", ":"),
         )
+        self._send_keepalive(CMD_HEARTBEAT, msg, read_response=read_response)
+
+    def send_webrtc_hello(self, *, read_response: bool = False):
+        """Re-send webrtcsvr `hello` to keep the live session's route alive.
+
+        The official app repeats it every ~21 s while live. Without it the
+        camera ends the session ~120 s after the SDP answer.
+        """
+        if not self.uuid:
+            return
+        self._send_keepalive(CMD_WEBRTC, self._webrtc_hello_msg(), read_response=read_response)
+
+    def _send_keepalive(self, cmd, msg, *, read_response: bool):
         with self._io_lock:
-            self._send_unlocked(METHOD_DIRECT, CMD_HEARTBEAT, msg)
+            self._send_unlocked(METHOD_DIRECT, cmd, msg)
             if not read_response or self.sock is None:
                 return
             old_timeout = self.sock.gettimeout()
@@ -244,9 +257,9 @@ class MsgSvrClient:
         }
         return inner
 
-    def _send_webrtc_hello(self):
+    def _webrtc_hello_msg(self) -> str:
         content = base64.b64encode(b'{"cmd":"hello"}').decode()
-        msg = json.dumps(
+        return json.dumps(
             {
                 "from": {
                     "node": "client",
@@ -260,7 +273,8 @@ class MsgSvrClient:
             separators=(",", ":"),
         )
 
-        self._send(METHOD_DIRECT, CMD_WEBRTC, msg)
+    def _send_webrtc_hello(self):
+        self._send(METHOD_DIRECT, CMD_WEBRTC, self._webrtc_hello_msg())
         resp = self._recv()
         data = resp["json"]
 
