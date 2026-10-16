@@ -41,6 +41,13 @@ DIRECT_SOURCE_IDLE_RECONNECT_S = 40.0
 # Kept above DIRECT_SOURCE_IDLE_RECONNECT_S so the engine manages its session
 # first and an external restart is only a last resort.
 DIRECT_VIDEO_STALL_RESTART_S = 45.0
+# A camera that has ended its side of the session goes completely silent: no
+# media, no audio, and no replies to the ICE checks we keep sending every
+# second. START_LIVE retries never revive it, but a fresh session starts in
+# ~1 s, so reconnect after this much total silence instead of waiting out the
+# source-idle budget. Snap (battery) cameras are exempt: their radio
+# power-save can go fully quiet and recover on its own.
+PEER_SILENT_RECONNECT_S = 4.0
 AUTH_FALLBACK_RESULT = (-1, -1)
 SIGNALING_CONNECT_TIMEOUT_S = 5.0
 CLIENT_KEYFRAME_REQUEST_DEBOUNCE_S = 4.0
@@ -49,6 +56,15 @@ _CLIENT_SESSION_LOCK = threading.Lock()
 
 class SignalingClusterMiss(RuntimeError):
     """The MsgSvr endpoint is reachable but does not know this device."""
+
+
+def peer_gone(
+    now: float, last_peer_udp: float, last_video: float, *, snap: bool
+) -> bool:
+    """True when a camera that was streaming has gone completely silent."""
+    if snap or last_video <= 0.0 or last_peer_udp <= 0.0:
+        return False
+    return now - last_peer_udp >= PEER_SILENT_RECONNECT_S
 
 
 def _unwrap_iva_payload(data: bytes) -> bytes:
