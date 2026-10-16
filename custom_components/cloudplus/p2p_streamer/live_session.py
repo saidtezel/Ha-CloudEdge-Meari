@@ -60,6 +60,7 @@ from .session_support import (
     IVA_HEARTBEAT_S,
     VVP_HEARTBEAT_S,
     _unwrap_iva_payload,
+    peer_gone,
 )
 
 # Log under the engine logger so existing log filters and the grep-targets in
@@ -477,6 +478,13 @@ class LiveSessionMixin:
             stall_time = _video_wait_s(now_ts)
             if stall_time <= 0.8:
                 return
+            if peer_gone(now_ts, last_udp_time, last_video_time, snap=self._is_snap):
+                _LOGGER.warning(
+                    "P2P peer silent %.1fs (no UDP from camera); reconnecting session",
+                    now_ts - last_udp_time,
+                )
+                reconnect_idle_source = True
+                return
 
             gap_backlog = _kcp_gap_backlog()
             if not gap_backlog:
@@ -566,7 +574,6 @@ class LiveSessionMixin:
 
         def _handle_peer_packet(packet) -> None:
             nonlocal candidate_fanout_until, last_udp_time, last_kcp_push_time
-            last_udp_time = time.time()
             peer = packet.peer
             if peer is None and not packet.via_turn:
                 peer = packet.source
@@ -577,6 +584,9 @@ class LiveSessionMixin:
                 and not packet.via_turn
                 and packet.source[0] == getattr(turn, "server_ip", None)
             )
+            if not is_turn_server_stun:
+                # Anything the camera sends, on any path: media, ICE replies.
+                last_udp_time = time.time()
             if parsed:
                 msg_type = parsed.get("type")
                 if msg_type == BINDING_REQUEST and peer is not None:

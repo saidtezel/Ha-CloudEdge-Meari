@@ -114,7 +114,7 @@ Pure-asyncio; can be driven from HA or from `debug.py` without changes.
 | `engine.py` | `P2PStreamer` — lifecycle and transport selection (`deviceP2P=ppcs` or modern WebRTC-like signaling). |
 | `live_session.py` | `LiveSessionMixin._stream_with_turn` — the per-session ICE → KCP → VVP → media loop (split out to keep files <1000 lines). |
 | `ppcs.py` | Legacy PPStrong root rendezvous, direct UDP punching, reliable channels and media reassembly. |
-| `session_support.py` | Shared session constants, identity helpers, `SignalingClusterMiss`. |
+| `session_support.py` | Shared session constants, identity helpers, `peer_gone` dead-peer check, `SignalingClusterMiss`. |
 | `root_discovery.py` | Native UDP root protocol on port 9253. |
 | `network.py` | Socket plumbing, packet routing, NAT timers. |
 | `ice.py` + `sdp.py` | Candidate gathering + SDP parsing (relay implicit in `m=audio`). |
