@@ -69,7 +69,10 @@ Alarm-type fields the parser looks for, in order:
 See [`const.py`](../custom_components/cloudplus/const.py) `ALARM_TYPE_NAMES`
 and `MOTION_ALARM_TYPES` for the active mapping. The motion binary sensor
 fires for any alarm in `MOTION_ALARM_TYPES = {1, 2, 11, 20}` (PIR, Motion,
-Human body, Person). `CRY_ALARM_TYPES = {7}` ("Baby cry") goes to a
+Human body, Person). Alerts have no "end" either, so it turns off once no
+motion alert has arrived for the camera's **Motion Timeout** (default 120 s,
+10–600 s), checked by every session loop (`_expire_motion`) on mains and
+battery cameras alike. `CRY_ALARM_TYPES = {7}` ("Baby cry") goes to a
 separate `on_cry` callback instead and drives the **Crying** binary sensor
 (on for `CRY_HOLD_S` = 60 s after the latest alert; alerts have no "end").
 Other alarm types (Visitor, Noise, Package, etc.) are classified by
@@ -104,8 +107,9 @@ reasons, all of which broke motion for real users:
   without relying on the ambiguous `evt` flag.
 - **Stable de-dup.** Each entry has a unique `msgID`; we remember
   `(deviceID, msgID)` so the same event is never re-fired. The seed pass at
-  startup records existing ids without dispatching; the set is cleared on day
-  rollover and capped to stay bounded.
+  startup records existing ids without dispatching. Ids are kept across
+  midnight and capped at 4000, dropping the oldest first: the summary below
+  is not per-day, so forgetting its ids would re-fire old events as motion.
 
 The poller also calls:
 
